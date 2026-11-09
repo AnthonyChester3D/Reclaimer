@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Reclaimer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#15171c;--panel:#1e2128;--line:#2c3039;--text:#d8dbe2;--dim:#8a8f9c;--acc:#5aa9ff;--good:#4fc38a;--warn:#e3a84f;--bad:#e06c6c}
+*{box-sizing:border-box}a{color:var(--acc)}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,Segoe UI,sans-serif}
+header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:18px;margin:0 12px 0 0}h1 span{color:var(--acc)}
+nav button{background:none;border:0;color:var(--dim);padding:8px 12px;font-size:14px;cursor:pointer;border-bottom:2px solid transparent}
+nav button.on{color:var(--text);border-color:var(--acc)}
+main{padding:14px 16px;max-width:1500px}
+section{display:none}section.on{display:block}
+.bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.bar .grow{flex:1}
+button,select,input{background:#262a33;color:var(--text);border:1px solid var(--line);border-radius:5px;padding:6px 10px;font-size:13px}
+button{cursor:pointer}button.pri{background:var(--acc);color:#081527;border-color:var(--acc);font-weight:600}
+button.danger{border-color:var(--bad);color:var(--bad)}button:disabled{opacity:.45;cursor:default}
+input[type=number]{width:70px}input[type=text]{width:100%}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-weight:500;font-size:12px;text-transform:uppercase;letter-spacing:.03em}
+td.num,th.num{text-align:right;white-space:nowrap}
+tr.item{cursor:pointer}tr.item:hover{background:#22252d}
+tr.files td{padding:0 0 10px 34px;background:#191c22}tr.files table td{font-size:12.5px;color:var(--dim)}
+.sv{color:var(--good);font-weight:600}.dim{color:var(--dim)}.warn{color:var(--warn)}.bad{color:var(--bad)}.ok{color:var(--good)}
+.tag{display:inline-block;padding:1px 6px;border-radius:4px;background:#2b3040;font-size:11px;margin-right:4px}
+.prog{height:6px;background:#2b3040;border-radius:3px;overflow:hidden;min-width:120px}.prog i{display:block;height:100%;background:var(--acc)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px}.card b{display:block;font-size:20px}.card span{color:var(--dim);font-size:12px}
+.help{color:var(--dim);font-size:12.5px;margin:6px 0 14px}
+.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:14px}
+.grp{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin-bottom:8px}
+.grp label{display:block;font-size:12.5px;color:var(--dim);padding:2px 0}.grp label.k{color:var(--text)}
+.chart{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;max-width:760px}
+.chart svg text{fill:var(--dim);font-size:11px}#tip{position:absolute;pointer-events:none;background:#0d0f13;border:1px solid var(--line);border-radius:5px;padding:4px 8px;font-size:12px;display:none;white-space:nowrap}
+.bar1{height:10px;background:var(--acc);border-radius:0 4px 4px 0;min-width:2px}
+details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
+.row{display:grid;grid-template-columns:1fr 110px 170px 40px;gap:8px;margin-bottom:6px;align-items:center}
+#toast.bad{border-color:var(--bad);background:#3a1d1d;color:#ffd7d7;font-weight:600}
+#toast{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:6px;display:none}
+</style></head><body>
+<header><h1>Reclaim<span>er</span></h1>
+<nav><button class="on" data-t="recs">Recommendations</button><button data-t="queue">Queue</button><button data-t="cleanup">Cleanup</button><button data-t="health">Health</button><button data-t="presets">Presets</button><button data-t="settings">Settings</button></nav>
+<div class="grow"></div><div id="status" class="dim"></div></header>
+<main>
+<section id="recs" class="on">
+ <div id="firstRun" class="card" style="display:none;margin-bottom:14px;max-width:760px"><b style="font-size:16px">Welcome. Add your first library to get started.</b>
+  <p class="help">A library is a folder laid out as <code>Movies\Movie Name\file</code> or <code>TV\Show\Season\episode</code>. You can add more in Settings.</p>
+  <div class="row" style="grid-template-columns:1fr 110px 170px auto"><input type="text" id="frPath" placeholder="\\mynas\video\Movies"><select id="frType"><option value="movies">movies</option><option value="tv">tv</option></select><select id="frPreset"></select><button id="frAdd" class="pri" style="white-space:nowrap;padding:6px 16px">Add &amp; scan</button></div></div>
+ <div class="bar">
+  <select id="scope"></select>
+  <button id="scanBtn" class="pri">Scan</button><label class="dim"><input type="checkbox" id="force"> re-probe everything</label>
+  <span class="grow"></span>
+  <label class="dim"><input type="checkbox" id="onlySave" checked> only show items with savings</label>
+  <button id="selAll">Select all shown</button><button id="selNone">Clear</button>
+  <select id="bulkPreset"><option value="">Set preset for selected…</option></select>
+  <button id="queueSel" class="pri">Queue selected</button>
+ </div>
+ <div class="cards" id="cards"></div>
+ <table><thead><tr><th></th><th>Name</th><th>Preset</th><th class="num">Files</th><th class="num">Now</th><th class="num">After</th><th class="num">Savings</th><th>Why</th></tr></thead><tbody id="recBody"></tbody></table>
+</section>
+<section id="queue">
+ <div class="bar"><button id="qStart" class="pri">Start</button><button id="qForce" title="ignore the encode window and Plex streaming check">Start now</button><button id="qStop">Stop after current</button><button id="qCancel" class="danger">Cancel current</button><button id="qClear">Clear finished</button><span class="grow"></span><span id="qSummary" class="dim"></span></div>
+ <table><thead><tr><th>File</th><th>Status</th><th style="width:160px">Progress</th><th>Detail</th><th class="num">Min</th></tr></thead><tbody id="qBody"></tbody></table>
+</section>
+<section id="cleanup">
+ <h3 style="margin-top:0">Duplicates</h3>
+ <p class="help">The same movie or episode in more than one place (for example in both your old library and the Sonarr/Radarr one), or two versions of one movie side by side. Reclaimer suggests which copy to keep: one Sonarr/Radarr manages first (so they don't re-download it), then the highest resolution, then the biggest. Pick a different one with the radio buttons. Removed copies go to a holding folder, so nothing is deleted until you empty it on the Recommendations tab.</p>
+ <div class="bar"><button id="dupFind">Refresh</button><span id="dupSum" class="dim"></span><span class="grow"></span><button id="dupAll">Select all</button><button id="dupNone">Clear</button><button id="dupGo" class="pri">Remove other copies</button></div>
+ <div id="dupList"><p class="dim">Scan your libraries, then come back here.</p></div>
+ <h3>Junk</h3>
+ <p class="help">Leftovers that Plex doesn't need: sample clips, unfinished downloads, archives that were already extracted, release clutter like RARBG.txt or .exe files, and optionally stray subtitle files, extras and folders with no video left. Only the first four are ticked by default. Everything goes to the same holding folder.</p>
+ <div class="bar"><button id="junkFind">Look again</button><span id="junkMsg" class="dim"></span><span class="grow"></span><button id="junkGo" class="pri">Move selected to holding</button></div>
+ <div id="junkList"></div>
+</section>
+<section id="health">
+ <div class="hero" id="hHero"></div>
+ <h3 style="margin-top:0">Space reclaimed over time</h3>
+ <div class="chart" id="hChart"></div>
+ <div id="hLibs" style="max-width:760px;margin-top:10px"></div>
+ <h3>Check held files</h3>
+ <p class="help">Before you delete the originals in holding, check that every encoded replacement decodes cleanly, has full-length audio, and looks like its original. Anything that fails can be restored from its row on the Recommendations tab.</p>
+ <div class="bar"><button id="vfGo" class="pri">Verify held files</button><span id="vfMsg" class="dim"></span></div>
+ <table id="vfTable" style="display:none"><thead><tr><th>Original</th><th>Result</th></tr></thead><tbody id="vfBody"></tbody></table>
+ <h3>Plex transcodes</h3>
+ <p class="help">Every time Plex converts something on the fly instead of playing the file as-is, it's listed here with the device and what had to be converted. Anything that keeps showing up is a file worth fixing. Needs the Plex URL and token in Settings; Reclaimer checks every 30 seconds while it's running.</p>
+ <div class="bar"><span class="grow"></span><button id="tcClear">Clear list</button></div>
+ <table><thead><tr><th>What was playing</th><th>Device</th><th>Converted</th><th class="num">Times</th><th>Last</th><th>Reclaimer</th></tr></thead><tbody id="tcBody"></tbody></table>
+ <h3>Sonarr / Radarr</h3>
+ <div id="hArr" class="help"></div>
+</section>
+<section id="presets">
+ <p class="help">Caps are the HEVC video bitrate ceiling in Mbps per output resolution. CQ is the NVENC quality knob (lower = better and bigger; 22–28 is the useful range). Audio: <b>stereo</b> = AAC 2.0 160k, <b>surround</b> = keep up to 5.1, lossless/DTS becomes E-AC3 448k, <b>keep</b> = untouched. <b>Burn subs</b>: styled ASS/SSA subtitles (and optionally PGS/VobSub image subs) in your language (Settings) are burned into the picture when the file has no audio in that language and no plain SRT subs in it; forced and signs/songs tracks are ignored. Roku and Xbox can't show these formats without Plex transcoding; plain SRT plays everywhere and is never burned.</p>
+ <table><thead><tr><th>Preset</th><th>Max res</th><th>2160 cap</th><th>1080 cap</th><th>720 cap</th><th>480 cap</th><th>CQ</th><th>Audio</th><th>HDR→SDR</th><th>Burn subs</th><th></th></tr></thead><tbody id="pBody"></tbody></table>
+ <div class="bar" style="margin-top:10px"><input type="text" id="newPreset" placeholder="new preset name" style="width:220px"><button id="addPreset">Add preset</button><span class="grow"></span><button id="savePresets" class="pri">Save presets</button></div>
+</section>
+<section id="settings">
+ <h3>Libraries</h3>
+ <p class="help">Each library is a folder laid out as <code>Movies/Movie Name/file</code> or <code>TV/Show/Season/episode</code>. The preset here is the default; override per show or movie in the Recommendations tab.</p>
+ <div id="libs"></div>
+ <div class="bar"><button id="addLib">Add library</button></div>
+ <h3>Encoding</h3>
+ <div class="bar">Encoder <select id="encoder"></select> &nbsp; Originals <select id="originals"><option value="move">move to holding folder</option><option value="delete">delete</option></select>
+  &nbsp; Min savings % <input type="number" id="minSave" min="0" max="90">
+  &nbsp; Check each encode <select id="verify"><option value="full">full: decode everything + compare pictures</option><option value="quick">quick: compare pictures</option><option value="off">off</option></select>
+  &nbsp; Burn subs language <input type="text" id="burnLang" style="width:60px">
+  &nbsp; Show rule <select id="showRule"><option value="season">match typical episode per season</option><option value="show">match typical episode per show</option><option value="off">off</option></select></div>
+ <h3>Audio languages</h3>
+ <p class="help">Drop audio tracks in languages nobody here listens to. Files with only one audio track, or with none of your kept languages, are never touched by this. When the video is already fine, the file is just repacked (seconds, no quality loss).</p>
+ <div class="bar"><label><input type="checkbox" id="langOn"> <b>remove audio in languages I don't keep</b></label>
+  <label class="dim"><input type="checkbox" id="langDefault"> always keep the default track (usually the original language)</label>
+  <label class="dim"><input type="checkbox" id="langUnknown"> keep untagged tracks</label></div>
+ <table style="max-width:640px"><thead><tr><th>Keep</th><th>Language</th><th class="num">Files</th><th class="num">Audio size</th><th class="num">Only language in</th></tr></thead><tbody id="langBody"><tr><td colspan="5" class="dim">scan your libraries to see which languages you have</td></tr></tbody></table>
+ <h3>Sonarr / Radarr</h3>
+ <p class="help">Optional but recommended. If Reclaimer shrinks an episode below the quality Sonarr is set to want (its "cutoff"), Sonarr may download the bigger copy again. With these filled in, Reclaimer never goes below a cutoff, prefers keeping the copy they manage when removing duplicates, and asks them to rescan what it changed. API key: in Sonarr/Radarr, Settings → General → Security → API Key.</p>
+ <div class="bar">Sonarr <input type="text" id="sonUrl" placeholder="http://mynas:8989" style="width:200px"> key <input type="text" id="sonKey" style="width:260px"></div>
+ <div class="bar">Radarr <input type="text" id="radUrl" placeholder="http://mynas:7878" style="width:200px"> key <input type="text" id="radKey" style="width:260px"></div>
+ <div class="bar"><label class="dim"><input type="checkbox" id="arrGuard"> never shrink below a Sonarr/Radarr cutoff</label>
+  <label class="dim"><input type="checkbox" id="arrRescan"> ask them to rescan after changes</label>
+  <button id="arrSync">Connect &amp; sync</button><span id="arrMsg" class="dim"></span></div>
+ <h3>Plex</h3>
+ <p class="help">Optional. With a server URL and token, <b>Sync genres</b> reads every show's and movie's genres from Plex and assigns presets by the rules below (first match wins; <code>Documentary+Crime</code> means both genres; manual overrides always win over these). It also runs by itself after every full scan. Token: in Plex Web open any item → ⋯ → Get Info → View XML, then copy the <code>X-Plex-Token</code> value from that page's URL.</p>
+ <div class="bar">URL <input type="text" id="plexUrl" placeholder="http://mynas:32400" style="width:240px"> Token <input type="text" id="plexToken" style="width:220px">
+  <label class="dim"><input type="checkbox" id="plexRefresh"> rescan Plex libraries when the queue finishes</label>
+  <button id="plexSync">Sync genres</button><span id="plexMsg" class="dim"></span></div>
+ <table style="max-width:640px"><thead><tr><th>Plex genre</th><th>TV preset</th><th>Movie preset</th><th></th></tr></thead><tbody id="ruleBody"></tbody></table>
+ <div class="bar" style="margin-top:6px"><button id="addRule">Add rule</button></div>
+ <h3>Schedule</h3>
+ <div class="bar"><label class="dim"><input type="checkbox" id="winOn"> only encode between</label> <input type="number" id="winStart" min="0" max="23"> and <input type="number" id="winEnd" min="0" max="23"> o'clock
+  &nbsp; <label class="dim"><input type="checkbox" id="pauseStream"> pause while someone is watching Plex</label></div>
+ <div class="bar"><label class="dim"><input type="checkbox" id="autoMode"> <b>auto mode</b>: rescan, queue and encode on its own every</label> <input type="number" id="autoInt" min="5"> minutes <span class="help" style="margin:0">(leave it running in the tray; new downloads get picked up)</span></div>
+ <div class="bar"><label class="dim"><input type="checkbox" id="notify"> show a Windows notification when a batch finishes</label></div>
+ <div class="bar"><button id="saveSettings" class="pri">Save settings</button><span id="setMsg" class="dim"></span></div>
+ <p class="help">Holding folder: <code>.reclaimer_originals</code> inside each library (with .plexignore files so Plex ignores it). <b>No space is freed until you delete it.</b> Failed/rejected files are remembered in reclaimer_state.json; use "retry" on them in the Recommendations tab.</p>
+</section>
+</main>
+<div id="toast"></div>
+<script>
+const $=s=>document.querySelector(s), api=(p,b)=>fetch(p,b?{method:'POST',body:JSON.stringify(b)}:{}).then(r=>r.json()).then(r=>{if(r&&r.error)toast('Problem: '+r.error,true);return r});
+const gb=b=>b>=1e12?(b/1e12).toFixed(2)+' TB':b>=1e9?(b/1e9).toFixed(1)+' GB':(b/1e6).toFixed(0)+' MB';
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let vfWas=false;
+let junkWas=false, dupes=[], junkSel=null;
+let S={}, recs=[], sel=new Set(), open=new Set(), scanWas=false, plexWas=false, prevWas=false, heldTotal=0;
+const jsArg=v=>esc(JSON.stringify(String(v)));
+let toastTimer;
+function toast(m,bad){const t=$('#toast');t.textContent=m;t.className=bad?'bad':'';t.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.style.display='none',bad?Math.max(8000,m.length*90):Math.max(2500,m.length*60))}
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.t).classList.add('on');
+  if(b.dataset.t=='cleanup'){loadDupes();renderJunk()} if(b.dataset.t=='health')loadHealth()});
+
+async function poll(){
+  S=await api('/api/state');
+  const sc=S.scan, q=S.queue;
+  $('#status').textContent=sc.running?(sc.phase||`scanning ${sc.done}/${sc.total}…`):sc.error?'scan error: '+sc.error:q.running?`encoding (${q.items.filter(i=>i.status=='queued').length} queued)`:`${S.cached} files known`;
+  $('#scanBtn').disabled=sc.running;
+  if(scanWas&&!sc.running){loadRecs();loadLangs();if(sc.genres)toast(sc.genres)} scanWas=sc.running;
+  $('#plexMsg').textContent=S.plex.msg||'';$('#arrMsg').textContent=S.arr.msg||'';$('#arrSync').disabled=S.arr.running;
+  $('#junkMsg').textContent=S.junk.msg||'';
+  const V=S.verify||{};$('#vfGo').disabled=V.running;$('#vfMsg').textContent=V.running?`${V.msg} (${V.done}/${V.total})`:(V.msg||'');
+  if((V.running||vfWas)&&$('#health').classList.contains('on'))renderVerify(V); vfWas=V.running;$('#junkFind').disabled=S.junk.running;
+  if(junkWas&&!S.junk.running&&$('#cleanup').classList.contains('on'))renderJunk(); junkWas=S.junk.running; $('#plexSync').disabled=S.plex.running;
+  if(S.preview.running)$('#status').textContent=`making preview ${(S.preview.progress||0).toFixed(0)}%`;
+  if(prevWas&&!S.preview.running){toast(S.preview.msg);if(S.preview.url)window.open(S.preview.url,'_blank')} prevWas=S.preview.running;
+  const fr=$('#firstRun');fr.style.display=S.config.libraries.length?'none':'block';
+  if(!S.config.libraries.length&&!$('#frPreset').options.length)$('#frPreset').innerHTML=Object.keys(S.config.presets).map(n=>`<option>${esc(n)}</option>`).join('');
+  if(plexWas&&!S.plex.running){loadRecs()} plexWas=S.plex.running;
+  renderQueue(); fillPresetSelects(); if(!$('#settings').dataset.init){renderSettings();renderPresets();$('#settings').dataset.init=1}
+}
+function fillPresetSelects(){
+  const names=Object.keys(S.config.presets);
+  const sc=$('#scope'); if(sc.dataset.n!=S.config.libraries.length){sc.innerHTML='<option value="">All libraries</option>'+S.config.libraries.map(l=>`<option value="${esc(l.path)}">${esc(l.path)}</option>`).join('');sc.dataset.n=S.config.libraries.length}
+  const bp=$('#bulkPreset'); if(bp.dataset.n!=names.join()){bp.innerHTML='<option value="">Set preset for selected…</option>'+names.map(n=>`<option>${esc(n)}</option>`).join('');bp.dataset.n=names.join()}
+}
+async function loadRecs(){recs=await api('/api/recommend?scope='+encodeURIComponent($('#scope').value));heldTotal=recs.reduce((a,r)=>a+(r.held||0),0);renderRecs()}
+async function restore(key){if(!confirm('Put the original files back and delete the encoded versions?'))return;const r=await api('/api/originals/restore',{key});if(!r.error)toast((r.restored+' files restored'));loadRecs()}
+async function preview(p){const r=await api('/api/preview',{path:p});if(!r.error){toast('making a 20 s preview…');prevWas=true}}
+function renderRecs(){
+  const names=Object.keys(S.config.presets), only=$('#onlySave').checked;
+  const shown=recs.filter(r=>!only||r.n_encode>0);
+  const now=recs.reduce((a,r)=>a+r.size,0), after=recs.reduce((a,r)=>a+r.est,0), nEnc=recs.reduce((a,r)=>a+r.n_encode,0);
+  $('#cards').innerHTML=`<div class="card"><b>${gb(now)}</b><span>scanned</span></div><div class="card"><b class="sv">${gb(now-after)}</b><span>estimated savings (${now?Math.round((now-after)/now*100):0}%)</span></div><div class="card"><b>${nEnc}</b><span>files to encode</span></div><div class="card"><b>${shown.length}</b><span>shows / movies shown</span></div><div class="card"><b>${gb(heldTotal)}</b><span>originals held ${heldTotal?'<button id="delOrig" class="danger" style="margin-left:6px;padding:2px 8px">Delete all</button>':''}</span></div>`;
+  if(heldTotal)$('#delOrig').onclick=async()=>{const v=S.verify||{},bad=(v.results||[]).filter(r=>!r.ok).length;
+    const note=v.running?'A check is still running.':!v.results||!v.results.length?'You haven\'t run "Verify held files" (Health tab) yet.':bad?`${bad} files FAILED the check - restore those first.`:'Every held file passed the check.';
+    if(!confirm(`${note}\n\nDelete ${gb(heldTotal)} of held originals? The encoded versions stay; this can't be undone.`))return;const r=await api('/api/originals/delete',{});if(!r.error)toast(('freed '+gb(r.freed)));loadRecs()};
+  $('#recBody').innerHTML=shown.map(r=>{
+    const why={}; r.files.forEach(f=>f.action=='encode'&&f.reasons.forEach(x=>{const k=x.replace(/[\d.]+ Mbps > [\d.]+/,'over bitrate').replace(/downscale .*/,'downscale').replace(/most episodes are \d+p/,'odd one out');why[k]=(why[k]||0)+1}));
+    const skipped=r.files.filter(f=>f.action=='skip').length;
+    return `<tr class="item" data-k="${esc(r.key)}"><td><input type="checkbox" ${sel.has(r.key)?'checked':''} ${r.n_encode?'':'disabled'} onclick="event.stopPropagation()"></td>
+    <td>${esc(r.name)} <span class="dim">${r.type}</span>${r.protected?' <span class="tag ok" title="protected: Reclaimer never touches it">🔒 protected</span>':''}${r.held?` <span class="tag" title="originals waiting in the holding folder; open the row to restore">${gb(r.held)} held</span>`:''}</td>
+    <td><select onclick="event.stopPropagation()" onchange="setOverride(${jsArg(r.key)},this.value)">${names.map(n=>`<option ${n==r.preset?'selected':''}>${esc(n)}</option>`).join('')}</select>${r.source?` <span class="tag" title="${esc(r.genres.length?'genres: '+r.genres.join(', '):'')}">${r.source}</span>`:r.genres.length?` <span class="tag warn" title="no rule matches these genres">${esc(r.genres.slice(0,3).join(', '))}</span>`:''}</td>
+    <td class="num">${r.n_encode}/${r.files.length}</td><td class="num">${gb(r.size)}</td><td class="num">${gb(r.est)}</td><td class="num sv">${r.size-r.est>0?'-'+gb(r.size-r.est):''}</td>
+    <td>${Object.entries(why).map(([k,v])=>`<span class="tag">${esc(k)} ×${v}</span>`).join('')}${skipped?`<span class="tag warn">${skipped} skipped</span>`:''}</td></tr>`+
+    (open.has(r.key)?`<tr class="files"><td colspan="8"><div class="bar" style="margin:6px 0 4px">
+      <button onclick="protect(${jsArg(r.key)},${!r.protected})">${r.protected?'🔓 Unprotect':'🔒 Protect'} ${r.type=='tv'?'this show':'this movie'}</button>
+      ${r.held?`<button onclick="restore(${jsArg(r.key)})">↩ Restore originals (${gb(r.held)})</button>`:''}
+      <span class="dim">${r.protected?'Reclaimer skips everything in here.':'Protect it to make Reclaimer leave it alone for good.'}</span></div><table>${r.files.map(f=>`<tr><td>${esc(f.rel)}</td><td>${f.res}${f.hdr?' HDR':''} ${f.codec} ${f.mbps} Mbps</td><td>${esc(f.audio)}${f.subs?' <span class="dim">subs: '+esc(f.subs)+'</span>':''}</td><td class="num">${gb(f.size)}</td><td class="${f.action=='encode'?'ok':f.action=='skip'?'bad':'dim'}">${f.action=='encode'?'→ '+f.target+' '+gb(f.est):f.action}</td><td>${f.action=='encode'?`<a href="#" onclick="preview(${jsArg(f.path)});return false">preview</a> `:''}${f.reasons.map(esc).join(', ')}${f.action=='skip'?` <a href="#" onclick="retry(${jsArg(f.path)});return false">retry</a>`:''}</td></tr>`).join('')}</table></td></tr>`:'');
+  }).join('');
+  document.querySelectorAll('tr.item').forEach(tr=>{tr.onclick=()=>{open.has(tr.dataset.k)?open.delete(tr.dataset.k):open.add(tr.dataset.k);renderRecs()};
+    tr.querySelector('input').onchange=e=>{e.target.checked?sel.add(tr.dataset.k):sel.delete(tr.dataset.k)}});
+}
+async function setOverride(key,preset){const r=recs.find(x=>x.key==key);await api('/api/override',{key,preset:preset==r.auto_preset?'':preset});S=await api('/api/state');loadRecs()}
+async function protect(key,on){if(on&&!confirm('Never touch this? It will be skipped by scans, the queue and auto mode.'))return;await api('/api/protect',{key,on});toast(on?'protected':'unprotected');loadRecs()}
+async function retry(p){await api('/api/retry',{paths:[p]});loadRecs()}
+$('#frAdd').onclick=async()=>{const path=$('#frPath').value.trim();if(!path)return toast('enter a folder path');
+  await api('/api/config',{libraries:[{path,type:$('#frType').value,preset:$('#frPreset').value}]});S=await api('/api/state');renderSettings();fillPresetSelects();$('#firstRun').style.display='none';
+  await api('/api/scan',{scope:'',force:false});scanWas=true;poll()};
+$('#scanBtn').onclick=async()=>{await api('/api/scan',{scope:$('#scope').value,force:$('#force').checked});scanWas=true;poll()};
+$('#scope').onchange=loadRecs; $('#onlySave').onchange=renderRecs;
+$('#selAll').onclick=()=>{recs.filter(r=>r.n_encode&&(!$('#onlySave').checked||r.n_encode)).forEach(r=>sel.add(r.key));renderRecs()};
+$('#selNone').onclick=()=>{sel.clear();renderRecs()};
+$('#bulkPreset').onchange=async e=>{if(!e.target.value)return;for(const k of sel)await api('/api/override',{key:k,preset:e.target.value});e.target.value='';S=await api('/api/state');loadRecs()};
+$('#queueSel').onclick=async()=>{const paths=recs.filter(r=>sel.has(r.key)).flatMap(r=>r.files.filter(f=>f.action=='encode').map(f=>f.path));if(!paths.length)return toast('nothing selected');await api('/api/queue/add',{paths});sel.clear();renderRecs();toast(paths.length+' files queued');poll()};
+
+function renderQueue(){
+  const q=S.queue, done=q.items.filter(i=>i.status=='done').length;
+  $('#qSummary').textContent=`${q.items.length} items, ${done} done, saved ${gb(q.saved)}`+(q.waiting?' — '+q.waiting:'')+(q.running&&q.stop?' — stopping after the current file':'');
+  $('#qStart').disabled=q.running;$('#qForce').disabled=q.running; $('#qStop').disabled=!q.running||q.stop; $('#qCancel').disabled=!q.current;
+  $('#qBody').innerHTML=q.items.map(i=>`<tr><td>${esc(i.path.split(/[\\/]/).slice(-2).join('/'))}</td><td class="${i.status=='done'?'ok':i.status=='failed'||i.status=='rejected'?'bad':i.status=='encoding'?'warn':'dim'}">${i.status}</td><td>${i.status=='encoding'?`<div class="prog"><i style="width:${i.progress.toFixed(0)}%"></i></div><span class="dim">${i.progress.toFixed(0)}% ${esc(i.speed||'')}</span>`:''}</td><td class="dim">${esc(i.detail||'')}</td><td class="num dim">${i.minutes||''}</td></tr>`).join('');
+}
+$('#qStart').onclick=()=>api('/api/queue/start',{}).then(poll);$('#qForce').onclick=()=>api('/api/queue/start',{force:true}).then(poll);$('#qStop').onclick=()=>api('/api/queue/stop',{}).then(poll);
+$('#qCancel').onclick=()=>confirm('Kill the current encode? The original is untouched.')&&api('/api/queue/cancel',{}).then(poll);
+$('#qClear').onclick=()=>api('/api/queue/clear',{}).then(poll);
+
+function renderPresets(){
+  const P=S.config.presets;
+  $('#pBody').innerHTML=Object.entries(P).map(([n,p])=>`<tr data-n="${esc(n)}"><td>${esc(n)}</td><td><select class="mh">${[2160,1440,1080,720,480].map(h=>`<option ${h==p.max_height?'selected':''}>${h}</option>`).join('')}</select></td>
+   ${['2160','1080','720','480'].map(t=>`<td><input type="number" step="0.5" class="cap" data-t="${t}" value="${p.caps[t]??''}"></td>`).join('')}
+   <td><input type="number" class="cq" min="15" max="40" value="${p.cq}"></td><td><select class="au">${['stereo','surround','keep'].map(a=>`<option ${a==p.audio?'selected':''}>${a}</option>`).join('')}</select></td>
+   <td><input type="checkbox" class="hdr" ${p.hdr_to_sdr?'checked':''}></td><td><select class="burn">${[['none','none'],['ass','ASS/SSA only'],['ass+image','ASS + PGS/VobSub']].map(([v,t])=>`<option value="${v}" ${(p.burn_subs===true?'ass':p.burn_subs||'none')==v?'selected':''}>${t}</option>`).join('')}</select></td><td><button class="del">✕</button></td></tr>`).join('');
+  document.querySelectorAll('#pBody .del').forEach(b=>b.onclick=()=>{b.closest('tr').remove()});
+}
+function readPresets(){const out={};document.querySelectorAll('#pBody tr').forEach(tr=>{const caps={};tr.querySelectorAll('.cap').forEach(i=>{if(i.value)caps[i.dataset.t]=+i.value});
+  out[tr.dataset.n]={max_height:+tr.querySelector('.mh').value,caps,cq:+tr.querySelector('.cq').value,audio:tr.querySelector('.au').value,hdr_to_sdr:tr.querySelector('.hdr').checked,burn_subs:tr.querySelector('.burn').value}});return out}
+$('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return;S.config.presets=readPresets();S.config.presets[n]={max_height:1080,caps:{1080:5,720:3,480:1.5},cq:26,audio:'stereo',hdr_to_sdr:true,burn_subs:'none'};$('#newPreset').value='';renderPresets()};
+$('#savePresets').onclick=async()=>{const presets=readPresets();for(const p of Object.values(presets))if(!Object.keys(p.caps).length)return toast('every preset needs at least one cap');await api('/api/config',{presets});toast('presets saved');S=await api('/api/state');loadRecs()};
+
+function renderSettings(){
+  const c=S.config;
+  $('#encoder').innerHTML=S.encoders.map(e=>`<option ${e==c.encoder?'selected':''}>${e}</option>`).join('');
+  $('#originals').value=c.originals;$('#minSave').value=c.min_savings_percent;$('#verify').value=c.verify||'full';$('#showRule').value=c.show_rule;$('#burnLang').value=c.burn_subs_lang||'eng';
+  $('#libs').innerHTML=c.libraries.map(l=>libRow(l)).join('');bindLibs();
+  $('#winOn').checked=!!c.window.enabled;$('#winStart').value=c.window.start;$('#winEnd').value=c.window.end;$('#pauseStream').checked=!!c.pause_when_streaming;$('#autoMode').checked=!!c.auto_mode;$('#autoInt').value=c.auto_interval_min;$('#notify').checked=c.notify!==false;
+  $('#langOn').checked=!!c.audio_lang_filter;$('#langDefault').checked=c.audio_keep_default!==false;$('#langUnknown').checked=c.audio_keep_unknown!==false;loadLangs();
+  $('#sonUrl').value=c.sonarr_url||'';$('#sonKey').value=c.sonarr_key||'';$('#radUrl').value=c.radarr_url||'';$('#radKey').value=c.radarr_key||'';
+  $('#arrGuard').checked=c.arr_guard!==false;$('#arrRescan').checked=c.arr_rescan!==false;
+  $('#plexUrl').value=c.plex_url||'';$('#plexToken').value=c.plex_token||'';$('#plexRefresh').checked=!!c.plex_refresh;
+  $('#ruleBody').innerHTML=(c.plex_rules||[]).map(ruleRow).join('');bindRules();
+}
+async function loadLangs(){const L=await api('/api/languages',{});if(!L.length)return;const keep=new Set(S.config.audio_keep_langs||[]);
+  $('#langBody').innerHTML=L.map(l=>`<tr><td><input type="checkbox" class="lk" value="${esc(l.lang)}" ${keep.has(l.lang)?'checked':''}></td><td>${esc(l.name)} <span class="dim">${esc(l.lang)}</span></td><td class="num">${l.files}</td><td class="num">${gb(l.bytes)}</td><td class="num dim">${l.only} files</td></tr>`).join('')}
+const presetOpts=v=>'<option value="">(library default)</option>'+Object.keys(S.config.presets).map(n=>`<option ${n==v?'selected':''}>${esc(n)}</option>`).join('');
+const ruleRow=r=>`<tr><td><input type="text" class="rg" value="${esc(r.genre)}"></td><td><select class="rt">${presetOpts(r.tv)}</select></td><td><select class="rm">${presetOpts(r.movies)}</select></td><td><button class="del">✕</button></td></tr>`;
+function bindRules(){document.querySelectorAll('#ruleBody .del').forEach(b=>b.onclick=()=>b.closest('tr').remove())}
+$('#addRule').onclick=()=>{$('#ruleBody').insertAdjacentHTML('beforeend',ruleRow({genre:'',tv:'',movies:''}));bindRules()};
+const readRules=()=>[...document.querySelectorAll('#ruleBody tr')].map(r=>({genre:r.querySelector('.rg').value.trim(),tv:r.querySelector('.rt').value,movies:r.querySelector('.rm').value})).filter(r=>r.genre);
+$('#plexSync').onclick=async()=>{await $('#saveSettings').onclick();const r=await api('/api/plex/sync',{});poll()};
+const libRow=l=>`<div class="row"><input type="text" class="lp" value="${esc(l.path)}" placeholder="\\\\mynas\\video\\Movies"><select class="lt"><option value="movies" ${l.type=='movies'?'selected':''}>movies</option><option value="tv" ${l.type=='tv'?'selected':''}>tv</option></select><select class="lpr">${Object.keys(S.config.presets).map(n=>`<option ${n==l.preset?'selected':''}>${esc(n)}</option>`).join('')}</select><button class="del">✕</button></div>`;
+function bindLibs(){document.querySelectorAll('#libs .del').forEach(b=>b.onclick=()=>b.closest('.row').remove())}
+$('#addLib').onclick=()=>{$('#libs').insertAdjacentHTML('beforeend',libRow({path:'',type:'movies',preset:'Movies HD'}));bindLibs()};
+$('#saveSettings').onclick=async()=>{const libraries=[...document.querySelectorAll('#libs .row')].map(r=>({path:r.querySelector('.lp').value.trim(),type:r.querySelector('.lt').value,preset:r.querySelector('.lpr').value})).filter(l=>l.path);
+  await api('/api/config',{libraries,encoder:$('#encoder').value,originals:$('#originals').value,min_savings_percent:+$('#minSave').value,verify:$('#verify').value,show_rule:$('#showRule').value,burn_subs_lang:$('#burnLang').value.trim()||'eng',
+    window:{enabled:$('#winOn').checked,start:+$('#winStart').value,end:+$('#winEnd').value},pause_when_streaming:$('#pauseStream').checked,auto_mode:$('#autoMode').checked,auto_interval_min:Math.max(5,+$('#autoInt').value||30),notify:$('#notify').checked,
+    audio_lang_filter:$('#langOn').checked,audio_keep_default:$('#langDefault').checked,audio_keep_unknown:$('#langUnknown').checked,
+    audio_keep_langs:document.querySelectorAll('#langBody .lk').length?[...document.querySelectorAll('#langBody .lk:checked')].map(i=>i.value):S.config.audio_keep_langs,
+    sonarr_url:$('#sonUrl').value.trim(),sonarr_key:$('#sonKey').value.trim(),radarr_url:$('#radUrl').value.trim(),radarr_key:$('#radKey').value.trim(),
+    arr_guard:$('#arrGuard').checked,arr_rescan:$('#arrRescan').checked,
+    plex_url:$('#plexUrl').value.trim(),plex_token:$('#plexToken').value.trim(),plex_refresh:$('#plexRefresh').checked,plex_rules:readRules()});
+  $('#setMsg').textContent='saved';S=await api('/api/state');fillPresetSelects();loadRecs()};
+// ---------- cleanup ----------
+const short=p=>{const l=(S.config.libraries||[]).find(l=>p.toLowerCase().startsWith(l.path.toLowerCase()));return l?l.path.split(/[\\/]/).filter(Boolean).slice(-2).join('/')+' › '+p.slice(l.path.length).replace(/^[\\/]/,''):p};
+async function loadDupes(){dupes=await api('/api/dupes',{});dupes.forEach(g=>{g.sel=false;g.keep=g.files.find(f=>f.keep).path});renderDupes()}
+function renderDupes(){
+  const sel=dupes.filter(g=>g.sel),save=sel.reduce((a,g)=>a+g.files.filter(f=>f.path!=g.keep).reduce((b,f)=>b+f.size,0),0);
+  $('#dupSum').textContent=dupes.length?`${dupes.length} duplicates, ${sel.length} selected, frees ${gb(save)}`:'';
+  $('#dupList').innerHTML=dupes.length?dupes.map((g,i)=>`<div class="grp"><label class="k"><input type="checkbox" data-g="${i}" class="dsel" ${g.sel?'checked':''}> <b>${esc(g.title)}</b> <span class="sv">-${gb(g.files.filter(f=>f.path!=g.keep).reduce((b,f)=>b+f.size,0))}</span></label>
+    ${g.files.map(f=>`<label><input type="radio" name="dk${i}" data-g="${i}" value="${esc(f.path)}" class="dkeep" ${f.path==g.keep?'checked':''}> keep: ${esc(short(f.path))} <span class="dim">· ${f.w}x${f.h} ${esc(f.codec)} ${f.mbps} Mbps · ${gb(f.size)}</span>${f.managed?' <span class="tag ok">Sonarr/Radarr</span>':''}</label>`).join('')}</div>`).join('')
+    :'<p class="dim">No duplicates found in your scanned libraries.</p>';
+  document.querySelectorAll('.dsel').forEach(c=>c.onchange=()=>{dupes[c.dataset.g].sel=c.checked;renderDupes()});
+  document.querySelectorAll('.dkeep').forEach(r=>r.onchange=()=>{dupes[r.dataset.g].keep=r.value;renderDupes()});
+}
+$('#dupFind').onclick=loadDupes;$('#dupAll').onclick=()=>{dupes.forEach(g=>g.sel=true);renderDupes()};$('#dupNone').onclick=()=>{dupes.forEach(g=>g.sel=false);renderDupes()};
+$('#dupGo').onclick=async()=>{const paths=dupes.filter(g=>g.sel).flatMap(g=>g.files.filter(f=>f.path!=g.keep).map(f=>f.path));if(!paths.length)return toast('nothing selected');
+  const size=dupes.filter(g=>g.sel).reduce((a,g)=>a+g.files.filter(f=>f.path!=g.keep).reduce((b,f)=>b+f.size,0),0);
+  if(!confirm(`Move ${paths.length} copies (${gb(size)}) to the holding folder? You can restore them until you empty it.`))return;
+  const r=await api('/api/dupes/remove',{paths});if(!r.error)toast(`moved ${r.moved} copies, ${gb(r.freed)}`);loadDupes();loadRecs()};
+function renderJunk(){
+  const items=S.junk.items||[],cats=S.junk.cats||{};
+  if(!junkSel||junkSel.n!=items.length){junkSel={n:items.length,on:new Set(items.filter(j=>cats[j.cat]&&cats[j.cat].default).map(j=>j.path))}}
+  const groups={};items.forEach(j=>(groups[j.cat]=groups[j.cat]||[]).push(j));
+  $('#junkList').innerHTML=Object.keys(cats).filter(c=>groups[c]).map(c=>{const g=groups[c],on=g.filter(j=>junkSel.on.has(j.path)).length;
+    return `<div class="grp"><label class="k"><input type="checkbox" class="jcat" data-c="${c}" ${on==g.length?'checked':''}> <b>${esc(cats[c].label)}</b> <span class="dim">${g.length} · ${gb(g.reduce((a,j)=>a+j.size,0))}${on&&on<g.length?` · ${on} selected`:''}</span></label>
+    <details><summary>show files</summary>${g.map(j=>`<label><input type="checkbox" class="jit" value="${esc(j.path)}" ${junkSel.on.has(j.path)?'checked':''}> ${esc(short(j.path))}${j.dir?'/':''} <span class="dim">${gb(j.size)}</span></label>`).join('')}</details></div>`}).join('')
+    ||'<p class="dim">No junk found.</p>';
+  document.querySelectorAll('.jcat').forEach(c=>c.onchange=()=>{(groups[c.dataset.c]||[]).forEach(j=>c.checked?junkSel.on.add(j.path):junkSel.on.delete(j.path));renderJunk()});
+  document.querySelectorAll('.jit').forEach(c=>c.onchange=()=>{c.checked?junkSel.on.add(c.value):junkSel.on.delete(c.value);renderJunk()});
+}
+$('#junkFind').onclick=async()=>{await api('/api/junk/find',{});junkWas=true;junkSel=null;poll()};
+$('#junkGo').onclick=async()=>{const paths=[...(junkSel?junkSel.on:[])];if(!paths.length)return toast('nothing selected');
+  if(!confirm(`Move ${paths.length} items to the holding folder?`))return;const r=await api('/api/junk/remove',{paths});if(!r.error)toast(`moved ${r.moved} items, ${gb(r.freed)}`);junkSel=null;S=await api('/api/state');renderJunk()};
+// ---------- health ----------
+async function loadHealth(){
+  const H=await api('/api/health',{}),h=H.history;
+  $('#hHero').innerHTML=`<div class="card"><b class="sv">${gb(h.total)}</b><span>reclaimed so far</span></div><div class="card"><b>${gb(h.held)}</b><span>in holding folders (freed when you empty them)</span></div>
+   <div class="card"><b>${gb(h.remaining+h.dupes+h.junk)}</b><span>still to reclaimer: ${gb(h.remaining)} re-encodes, ${gb(h.dupes)} duplicates, ${gb(h.junk)} junk</span></div>`;
+  drawChart(h.series);
+  const libs=h.by_lib.filter(l=>l.saved>0),mx=Math.max(1,...libs.map(l=>l.saved));
+  $('#hLibs').innerHTML=libs.length?'<table style="table-layout:fixed">'+libs.map(l=>`<tr><td style="width:30%">${esc(short(l.lib+'/').replace(/ › $/,''))}</td><td style="width:55%"><div class="bar1" style="width:${(l.saved/mx*100).toFixed(1)}%" title="${gb(l.saved)}"></div></td><td class="num">${gb(l.saved)}</td></tr>`).join('')+'</table>':'';
+  $('#tcBody').innerHTML=H.transcodes.length?H.transcodes.map(t=>`<tr><td>${esc(t.title||t.file.split(/[\\/]/).pop())}<br><span class="dim">${esc(t.codec?t.codec+' · '+t.audio+(t.subs?' · subs: '+t.subs:''):'not in your scanned libraries')}</span></td><td>${esc(t.device)}</td>
+    <td>${t.what.map(w=>`<span class="tag warn">${w}</span>`).join('')}</td><td class="num">${t.count}</td><td class="dim">${esc(t.last||'')}</td>
+    <td>${t.rec?(t.rec.action=='encode'?`<a href="#" onclick="queueOne(${jsArg(t.local)});return false">queue fix</a> <span class="dim">${esc(t.rec.reasons.join(', '))}</span>`:`<span class="dim">${esc(t.rec.action)} ${esc(t.rec.reasons.join(', '))}</span>`):''}</td></tr>`).join('')
+    :'<tr><td colspan="6" class="dim">Nothing transcoded yet. That is what you want.</td></tr>';
+  $('#hArr').innerHTML=(H.arr_msg?esc(H.arr_msg)+'<br>':(H.arr_items?'':'Not connected (Settings → Sonarr / Radarr).<br>'))+
+    H.arr.map(a=>`${a.app} profile <b>${esc(a.profile)}</b> wants at least ${a.cutoff}p, so ${a.files} files in ${a.items} shows/movies are kept at ${a.cutoff}p instead of going smaller. Lower that profile's cutoff in ${a.app} if you want them smaller.`).join('<br>');
+}
+function renderVerify(V){const r=V.results||[],bad=r.filter(x=>!x.ok);$('#vfTable').style.display=r.length?'':'none';
+  $('#vfBody').innerHTML=(bad.length?bad:r.slice(-8)).map(x=>`<tr><td>${esc(short(x.original).replace(/\.reclaimer_(originals|removed)/,''))}</td><td class="${x.ok?'ok':'bad'}">${x.ok?'✓':'✗'} ${esc(x.detail)}</td></tr>`).join('')+
+   (bad.length&&r.length>bad.length?`<tr><td colspan="2" class="dim">${r.length-bad.length} others passed</td></tr>`:'')}
+$('#vfGo').onclick=async()=>{const r=await api('/api/verify_held',{});if(r.error)return;vfWas=true;poll()};
+async function queueOne(p){await api('/api/queue/add',{paths:[p]});toast('queued');poll()}
+$('#tcClear').onclick=async()=>{await api('/api/transcodes/clear',{});loadHealth()};
+function drawChart(pts){
+  const el=$('#hChart');
+  if(pts.length<2){el.innerHTML=`<p class="dim" style="margin:6px">${pts.length?`${gb(pts[0].total)} reclaimed on ${pts[0].day}. The chart fills in as more days are added.`:'Nothing reclaimed yet.'}</p>`;return}
+  const W=740,Hh=220,L=56,R=14,T=12,B=26,mx=Math.max(...pts.map(p=>p.total))*1.08,t=pts.map(p=>Date.parse(p.day)),t0=t[0],span=Math.max(1,t[t.length-1]-t0),
+    x=i=>L+(t[i]-t0)/span*(W-L-R),y=v=>T+(Hh-T-B)*(1-v/mx);
+  const ticks=[0,.25,.5,.75,1].map(f=>f*mx);
+  const path=pts.map((p,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(p.total).toFixed(1)}`).join('');
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${Hh}" width="100%" role="img" aria-label="Space reclaimed over time">
+   ${ticks.map(t=>`<line x1="${L}" x2="${W-R}" y1="${y(t)}" y2="${y(t)}" stroke="#2c3039" stroke-width="1"/><text x="${L-8}" y="${y(t)+4}" text-anchor="end">${gb(t)}</text>`).join('')}
+   ${[0,pts.length-1].map(i=>`<text x="${x(i)}" y="${Hh-6}" text-anchor="${i?'end':'start'}">${pts[i].day}</text>`).join('')}
+   <path d="${path}" fill="none" stroke="#5aa9ff" stroke-width="2" stroke-linejoin="round"/>
+   <line id="cx" y1="${T}" y2="${Hh-B}" stroke="#8a8f9c" stroke-width="1" visibility="hidden"/><circle id="cd" r="4" fill="#5aa9ff" stroke="#1e2128" stroke-width="2" visibility="hidden"/>
+   <rect x="${L}" y="${T}" width="${W-L-R}" height="${Hh-T-B}" fill="transparent" id="ch"/></svg><div id="tip"></div>`;
+  const svg=el.querySelector('svg'),tip=$('#tip');
+  $('#ch').onmousemove=e=>{const r=svg.getBoundingClientRect(),sx=(e.clientX-r.left)*W/r.width,i=pts.reduce((b,_,j)=>Math.abs(x(j)-sx)<Math.abs(x(b)-sx)?j:b,0),p=pts[i];
+    $('#cx').setAttribute('x1',x(i));$('#cx').setAttribute('x2',x(i));$('#cx').setAttribute('visibility','visible');$('#cd').setAttribute('cx',x(i));$('#cd').setAttribute('cy',y(p.total));$('#cd').setAttribute('visibility','visible');
+    tip.style.display='block';tip.innerHTML=`<b>${p.day}</b><br>${gb(p.total)} total<br><span class="dim">+${gb(p.saved)} that day</span>`;tip.style.left=(x(i)*r.width/W+16)+'px';tip.style.top=(y(p.total)*r.height/Hh)+'px'};
+  $('#ch').onmouseleave=()=>{tip.style.display='none';$('#cx').setAttribute('visibility','hidden');$('#cd').setAttribute('visibility','hidden')};
+}
+$('#arrSync').onclick=async()=>{await $('#saveSettings').onclick();const r=await api('/api/arr/sync',{});poll()};
+poll().then(loadRecs);setInterval(poll,2000);
+</script></body></html>
