@@ -6,8 +6,9 @@
 
 Needs ffmpeg + ffprobe on PATH. Settings live in reclaimer.json next to this file.
 """
-import argparse, csv, html, json, os, re, shutil, statistics, subprocess, sys, tempfile, threading, time, webbrowser
+import argparse, base64, csv, html, json, os, re, shutil, statistics, subprocess, sys, tempfile, threading, time, webbrowser
 from urllib.parse import unquote, urlencode
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,7 +41,8 @@ STAT_TAGS = ["BPS", "DURATION", "NUMBER_OF_FRAMES", "NUMBER_OF_BYTES", "_STATIST
              "_STATISTICS_WRITING_DATE_UTC", "_STATISTICS_TAGS"]
 
 def preset(max_h, caps, cq, audio, hdr_to_sdr=True):
-    return {"max_height": max_h, "caps": caps, "cq": cq, "audio": audio, "hdr_to_sdr": hdr_to_sdr, "burn_subs": "none"}
+    return {"max_height": max_h, "caps": caps, "cq": cq, "audio": audio, "hdr_to_sdr": hdr_to_sdr, "burn_subs": "none",
+            "ten_bit": False, "denoise": "none"}
 
 DEFAULT_PRESETS = {
     "Live Action TV": preset(1080, {"1080": 5, "720": 3, "480": 1.5}, 26, "stereo"),
@@ -54,14 +56,29 @@ DEFAULT_PRESETS = {
     "Sitcom":         preset(1080, {"1080": 3, "720": 2, "480": 1.2}, 27, "stereo"),
     "True Crime":     preset(720,  {"720": 1.8, "480": 1}, 28, "stereo"),
     "CG Animation":   preset(1080, {"1080": 5, "720": 3, "480": 1.5}, 25, "surround"),
+    "Talk & Reality": preset(720,  {"720": 1.8, "480": 1}, 28, "stereo"),
+    "Documentary":    preset(1080, {"1080": 6, "720": 3.5, "480": 1.8}, 24, "stereo"),
+    "Concerts":       preset(1080, {"1080": 8, "720": 4, "480": 2}, 24, "surround"),
+    "Sports":         preset(1080, {"1080": 8, "720": 5, "480": 2.5}, 23, "surround"),
+    "Classic Film":   {**preset(1080, {"1080": 10, "720": 5, "480": 2.5}, 23, "surround"), "denoise": "light"},
+    "Dark & Moody":   {**preset(1080, {"1080": 9, "720": 4.5, "480": 2}, 23, "surround"), "ten_bit": True},
+    "Lectures":       preset(720,  {"720": 1, "480": 0.6}, 30, "stereo"),
+    "TV 4K":          preset(2160, {"2160": 12, "1080": 6, "720": 3.5, "480": 1.5}, 25, "surround", False),
 }
-# first matching rule wins; "A+B" means the item must have both genres; "" = leave the library default
+# first matching rule wins; "A+B" = needs both genres; "A|B" = either one; "" = leave the library default
 DEFAULT_RULES = [
     {"genre": "Anime", "tv": "Anime", "movies": "Anime"},
-    {"genre": "Documentary+Crime", "tv": "True Crime", "movies": "True Crime"},
-    {"genre": "True Crime", "tv": "True Crime", "movies": "True Crime"},
+    {"genre": "Documentary+Crime|True Crime", "tv": "True Crime", "movies": "True Crime"},
+    {"genre": "Reality|Reality TV|Reality-TV|Game Show|Talk|Talk Show|News|Stand-Up|Stand-Up Comedy", "tv": "Talk & Reality", "movies": "Talk & Reality"},
+    {"genre": "Concert|Music+Documentary", "tv": "Concerts", "movies": "Concerts"},
+    {"genre": "Education|Educational|How-To|Lecture", "tv": "Lectures", "movies": "Lectures"},
     {"genre": "Animation", "tv": "Cartoons HD", "movies": "CG Animation"},
-    {"genre": "Comedy", "tv": "Sitcom", "movies": ""},
+    {"genre": "Sport|Sports", "tv": "Sports", "movies": ""},
+    {"genre": "Documentary", "tv": "Documentary", "movies": "Documentary"},
+    {"genre": "Horror", "tv": "Dark & Moody", "movies": "Dark & Moody"},
+    {"genre": "Children|Kids", "tv": "Sitcom", "movies": ""},
+    {"genre": "Science Fiction|Sci-Fi & Fantasy|Fantasy|Action|Action & Adventure|War|War & Politics|Western", "tv": "Cinematic TV", "movies": ""},
+    {"genre": "Comedy|Soap", "tv": "Sitcom", "movies": ""},
 ]
 DEFAULT_CONFIG = {
     "libraries": [],          # {"path": r"\\mynas\video\Movies", "type": "movies"|"tv", "preset": "Movies HD"}
@@ -80,8 +97,11 @@ DEFAULT_CONFIG = {
     "ignore_dirs": ["#recycle", "#snapshot", "@eaDir"],
     "plex_url": "",           # e.g. http://mynas:32400
     "plex_token": "",
+    "jellyfin_url": "", "jellyfin_key": "",   # e.g. http://mynas:8096 + an API key (Dashboard -> API Keys)
+    "emby_url": "", "emby_key": "",
+    "kodi_url": "", "kodi_user": "", "kodi_password": "",   # e.g. http://livingroom:8080 (Kodi's web server must be on)
     "plex_rules": DEFAULT_RULES,
-    "plex_refresh": True,     # ask Plex to rescan its libraries when the queue finishes
+    "plex_refresh": True,     # ask the media servers to rescan their libraries when the queue finishes
     "window": {"enabled": False, "start": 1, "end": 8},   # only encode between these hours (start > end = overnight)
     "pause_when_streaming": True,                         # wait while someone is watching Plex
     "auto_mode": False,                                   # rescan, queue and encode on its own
@@ -102,7 +122,7 @@ DEFAULT_CONFIG = {
 IGNORE_MARKERS = (".reclaimerignore",)   # drop this file in a folder to hide it and everything below
 PREVIEW = {"running": False, "msg": "", "url": ""}
 TRAY = {}
-PLEX = {"running": False, "msg": ""}
+MEDIA = {"running": False, "msg": ""}
 LOCK = threading.Lock()
 CFG, CACHE, STATE, GENRES = {}, {}, {}, {}
 ARR_MAP, TRANSCODES = {}, {}   # show/movie folder -> Sonarr/Radarr info; "file|device" -> Plex transcode record
@@ -133,7 +153,11 @@ def save_cache():
 
 def load_cache():
     d = load_json(CACHE_PATH, {})
-    return d.get("files", {}) if d.get("version") == CACHE_VERSION else {}
+    files = d.get("files", {}) if d.get("version") == CACHE_VERSION else {}
+    for c in files.values():                     # apply title-based language guesses to files probed earlier too
+        if c.get("info"):
+            guess_languages(c["info"])
+    return files
 
 def num(x):
     try:
@@ -204,6 +228,7 @@ def summarize(path, data):
     auds = [{"idx": a["index"], "codec": a.get("codec_name", "?"), "ch": int(a.get("channels") or 2), "bps": audio_bps(a),
              "lang": lang_code((a.get("tags") or {}).get("language")), "title": (a.get("tags") or {}).get("title", ""),
              "default": bool(a.get("disposition", {}).get("default"))} for a in audio]
+    guess_languages({"audio": auds})
     vbps = stream_bps(v)
     if not vbps and dur:
         vbps = max(0.0, (num(fmt.get("bit_rate")) or size * 8 / dur) - sum(a["bps"] for a in auds))
@@ -212,6 +237,7 @@ def summarize(path, data):
         "path": str(path), "size": size, "duration": dur, "codec": v.get("codec_name", "?"),
         "width": int(v.get("width") or 0), "height": int(v.get("height") or 0), "vbps": vbps,
         "field_order": v.get("field_order", ""),
+        "fps": round(num((v.get("avg_frame_rate") or "0/1").split("/")[0]) / max(1.0, num((v.get("avg_frame_rate") or "0/1").split("/")[1] or 1)), 2),
         "color": {k: v.get(k) for k in ("color_primaries", "color_transfer", "color_space", "color_range")},
         "hdr": v.get("color_transfer") in ("smpte2084", "arib-std-b67"),
         "dv_profile": int(dv.get("dv_profile") or 0) if dv else 0,
@@ -249,7 +275,7 @@ def run_scan(scope, force):
             except OSError:
                 continue
             c = CACHE.get(p)
-            if force or not c or c["size"] != st.st_size or c["mtime"] != st.st_mtime:
+            if force or not c or c["size"] != st.st_size or c["mtime"] != st.st_mtime or (c.get("info") and "fps" not in c["info"]):
                 todo.append((p, st))
         SCAN.update(total=len(todo), done=0)
         if not scope:  # full scan: forget files that no longer exist
@@ -285,9 +311,9 @@ def run_scan(scope, force):
     if not scope and not JUNK["running"]:
         JUNK.update(running=True, msg="looking for junk…")
         find_junk()
-    if not scope and CFG["plex_url"] and CFG["plex_token"] and not PLEX["running"]:
-        PLEX.update(running=True, msg="syncing genres…")
-        plex_sync()
+    if not scope and servers() and not MEDIA["running"]:
+        MEDIA.update(running=True, msg="syncing genres…")
+        media_sync()
 
 
 # ---------- planning ----------
@@ -310,7 +336,7 @@ def group_key(path, lib):
 
 def item_genres(item):
     g = GENRES.get(item, {})
-    return set(g.get("nfo", [])) | set(g.get("plex", []))
+    return set().union(*(v for k, v in g.items() if k != "ids"))
 
 def _auto(item, lib):
     if not AUTO:                                   # rebuild: one pass over the cache for every item's tallest video
@@ -323,7 +349,7 @@ def _auto(item, lib):
     if item not in AUTO:
         g = GENRES.get(item, {})
         name = rule_preset(item_genres(item), lib["type"], item) if g else None
-        src = "+".join(k for k in ("nfo", "plex") if g.get(k)) if name else ""
+        src = "+".join(k for k in ("nfo", *SERVERS) if g.get(k)) if name else ""
         AUTO[item] = (name or lib.get("preset"), src)
     return AUTO[item]
 
@@ -353,7 +379,37 @@ LANG_NAMES = {"eng": "English", "fra": "French", "deu": "German", "spa": "Spanis
               "rus": "Russian", "zho": "Chinese", "kor": "Korean", "nld": "Dutch", "swe": "Swedish", "nor": "Norwegian", "dan": "Danish",
               "fin": "Finnish", "pol": "Polish", "ces": "Czech", "hun": "Hungarian", "tur": "Turkish", "ell": "Greek", "heb": "Hebrew",
               "ara": "Arabic", "hin": "Hindi", "tha": "Thai", "ukr": "Ukrainian", "vie": "Vietnamese", "ind": "Indonesian",
-              "cat": "Catalan", "ron": "Romanian", "und": "Unknown / untagged"}
+              "cat": "Catalan", "ron": "Romanian", "bul": "Bulgarian", "isl": "Icelandic", "tam": "Tamil", "tel": "Telugu",
+              "hrv": "Croatian", "srp": "Serbian", "bos": "Bosnian", "slk": "Slovak", "slv": "Slovenian", "est": "Estonian",
+              "lav": "Latvian", "lit": "Lithuanian", "msa": "Malay", "fil": "Filipino", "tgl": "Tagalog", "ben": "Bengali",
+              "urd": "Urdu", "pan": "Punjabi", "mar": "Marathi", "guj": "Gujarati", "kan": "Kannada", "mal": "Malayalam",
+              "fas": "Persian", "kat": "Georgian", "hye": "Armenian", "aze": "Azerbaijani", "kaz": "Kazakh", "uzb": "Uzbek",
+              "mon": "Mongolian", "khm": "Khmer", "lao": "Lao", "mya": "Burmese", "sin": "Sinhala", "nep": "Nepali",
+              "swa": "Swahili", "afr": "Afrikaans", "zul": "Zulu", "amh": "Amharic", "som": "Somali", "yor": "Yoruba",
+              "cym": "Welsh", "gle": "Irish", "gla": "Scottish Gaelic", "eus": "Basque", "glg": "Galician", "ltz": "Luxembourgish",
+              "mlt": "Maltese", "sqi": "Albanian", "mkd": "Macedonian", "bel": "Belarusian", "nob": "Norwegian Bokmål",
+              "nno": "Norwegian Nynorsk", "yue": "Cantonese", "cmn": "Mandarin", "lat": "Latin", "epo": "Esperanto",
+              "zxx": "No spoken language", "mul": "Multiple languages", "mis": "Uncoded language",
+              "cpe": "English-based creole (likely mis-tagged)", "qaa": "Original language (unnamed)",
+              "und": "Unknown / untagged"}
+TITLE_LANGS = [(re.compile(p, re.I), code) for p, code in (
+    (r"\b(english|eng)\b", "eng"), (r"\b(japanese|jpn|jap|nihongo)\b", "jpn"), (r"\b(spanish|español|espanol|castellano|latino|spa)\b", "spa"),
+    (r"\b(french|français|francais|fre|fra|vf|vff)\b", "fra"), (r"\b(german|deutsch|ger|deu)\b", "deu"), (r"\b(italian|italiano|ita)\b", "ita"),
+    (r"\b(portuguese|português|portugues|brazilian|por)\b", "por"), (r"\b(russian|русский|rus)\b", "rus"), (r"\b(korean|kor)\b", "kor"),
+    (r"\b(mandarin|chinese|cantonese|chi|zho)\b", "zho"), (r"\b(hindi|hin)\b", "hin"), (r"\b(dutch|nederlands)\b", "nld"),
+    (r"\b(polish|polski)\b", "pol"), (r"\b(swedish|svenska)\b", "swe"), (r"\b(danish|dansk)\b", "dan"),
+    (r"\b(norwegian|norsk)\b", "nor"), (r"\b(finnish|suomi)\b", "fin"), (r"\b(turkish|türkçe)\b", "tur"),
+    (r"\b(arabic)\b", "ara"), (r"\b(hungarian|magyar)\b", "hun"), (r"\b(czech|česky)\b", "ces"), (r"\b(ukrainian)\b", "ukr"),
+    (r"\b(thai)\b", "tha"), (r"\b(greek)\b", "ell"), (r"\b(hebrew)\b", "heb"))]
+
+def guess_languages(info):
+    """Untagged audio tracks often say their language in the title ("English 5.1", "Japanese"): use it."""
+    for a in info.get("audio", []):
+        if a.get("lang") == "und" and a.get("title"):
+            hits = {code for rx, code in TITLE_LANGS if rx.search(a["title"])}
+            if len(hits) == 1:
+                a["lang"], a["lang_guessed"] = hits.pop(), True
+    return info
 
 def lang_code(tag):
     t = (tag or "und").strip().lower()
@@ -377,8 +433,10 @@ def language_summary():
             continue
         langs = {a["lang"] for a in info["audio"]}
         for a in info["audio"]:
-            e = out.setdefault(a["lang"], {"lang": a["lang"], "name": LANG_NAMES.get(a["lang"], a["lang"]), "files": 0, "bytes": 0, "only": 0})
+            e = out.setdefault(a["lang"], {"lang": a["lang"], "name": LANG_NAMES.get(a["lang"], a["lang"]), "files": 0, "bytes": 0,
+                                           "only": 0, "guessed": 0})
             e["bytes"] += a["bps"] * info["duration"] / 8
+            e["guessed"] += bool(a.get("lang_guessed"))
         for l in langs:
             out[l]["files"] += 1
             if len(langs) == 1:
@@ -472,6 +530,8 @@ def evaluate(info, pname, p, typ):
         cap = cap_for(p["caps"], ow, oh) if guard[0] <= top else float(p["caps"][str(top)]) * 1e6 * (guard[0] / top) ** 2
         plan["reasons"].append(f"kept at {guard[0]}p for {guard[1]}")
         plan["arr_kept"] = True
+    if info.get("fps", 0) > 40:
+        cap *= 1.5                                    # caps assume ~24-30 fps; 50/60 fps needs more bits for the same quality
     if (ow, oh) != (info["width"], info["height"]):
         plan["reasons"].append(f"downscale {info['width']}x{info['height']}")
     if info["vbps"] > cap:
@@ -572,16 +632,22 @@ def plex_get(path, **params):
     return json.loads(body)["MediaContainer"] if body.strip() else {}
 
 def local_dir_index():
-    """tail-of-path -> local folders, so Plex's /volume1/video/TV/Show/Season 1 finds \\\\nas\\video\\TV\\Show\\Season 1."""
+    """tail-of-path -> local folders, so a server's /volume1/video/TV/Show/Season 1 (or smb://nas/video/TV/Show/)
+    finds \\\\nas\\video\\TV\\Show\\Season 1. Show/movie folders are indexed too, for servers that report those."""
     idx = {}
     for p in CACHE:
-        parts = Path(p).parent.parts
-        for n in range(1, min(5, len(parts)) + 1):
-            idx.setdefault(tuple(x.lower() for x in parts[-n:]), set()).add(str(Path(p).parent))
+        dirs = {str(Path(p).parent)}
+        lib = library_of(p)
+        if lib:
+            dirs.add(item_key(p, lib))
+        for d in dirs:
+            parts = Path(d).parts
+            for n in range(1, min(5, len(parts)) + 1):
+                idx.setdefault(tuple(x.lower() for x in parts[-n:]), set()).add(d)
     return idx
 
-def match_dir(idx, plex_file):
-    parts = [x for x in plex_file.replace("\\", "/").split("/") if x][:-1]
+def match_dir(idx, server_file):
+    parts = [x for x in server_file.replace("\\", "/").split("/") if x][:-1]
     for n in range(1, min(5, len(parts)) + 1):
         hits = idx.get(tuple(x.lower() for x in parts[-n:]))
         if not hits:
@@ -592,8 +658,8 @@ def match_dir(idx, plex_file):
 
 def rule_preset(genres, kind, item):
     for rule in CFG["plex_rules"]:
-        need = {g.strip().lower() for g in rule["genre"].split("+") if g.strip()}
-        if need and need <= genres and rule.get(kind):
+        alts = [{g.strip().lower() for g in alt.split("+") if g.strip()} for alt in rule["genre"].split("|")]
+        if any(need and need <= genres for need in alts) and rule.get(kind):
             name = rule[kind]
             if name.endswith(" HD") and name[:-3] + " SD" in CFG["presets"]:
                 if AUTO.get("_maxh", {}).get(item, 1080) <= 576:
@@ -601,18 +667,48 @@ def rule_preset(genres, kind, item):
             return name if name in CFG["presets"] else None
     return None
 
-def plex_sync():
-    try:
-        idx, seen, no_genre, unmatched = local_dir_index(), 0, 0, []
-        plex_genres = {}
-        if not idx:
-            raise ValueError("scan your libraries first so their folders are known")
-        secs = [d for d in plex_get("/library/sections").get("Directory", []) if d["type"] in ("show", "movie")]
-        for sec in secs:
+SERVERS = {"plex": "Plex", "jellyfin": "Jellyfin", "emby": "Emby", "kodi": "Kodi"}
+
+def servers():
+    """Media servers with enough settings to talk to."""
+    need = {"plex": ("plex_url", "plex_token"), "jellyfin": ("jellyfin_url", "jellyfin_key"),
+            "emby": ("emby_url", "emby_key"), "kodi": ("kodi_url",)}
+    return [a for a, keys in need.items() if all(CFG.get(k) for k in keys)]
+
+def jf_request(app, path, method="GET", **params):
+    """Jellyfin / Emby REST call (Emby may live under /emby)."""
+    base = CFG[f"{app}_url"].rstrip("/")
+    qs = "?" + urlencode(params) if params else ""
+    for prefix in ("", "/emby"):
+        req = Request(base + prefix + path + qs, data=b"" if method == "POST" else None, method=method,
+                      headers={"X-Emby-Token": CFG[f"{app}_key"], "Accept": "application/json"})
+        try:
+            with urlopen(req, timeout=60) as r:
+                body = r.read()
+            return json.loads(body) if body.strip() else {}
+        except HTTPError as e:
+            if e.code != 404 or prefix:
+                raise
+
+def kodi_rpc(method, params=None):
+    headers = {"Content-Type": "application/json"}
+    if CFG.get("kodi_user"):
+        headers["Authorization"] = "Basic " + base64.b64encode(f"{CFG['kodi_user']}:{CFG.get('kodi_password', '')}".encode()).decode()
+    body = json.dumps({"jsonrpc": "2.0", "method": method, "params": params or {}, "id": 1}).encode()
+    with urlopen(Request(CFG["kodi_url"].rstrip("/") + "/jsonrpc", data=body, headers=headers), timeout=60) as r:
+        d = json.loads(r.read())
+    if "error" in d:
+        raise ValueError(d["error"].get("message", "Kodi error"))
+    return d.get("result") or {}
+
+def server_items(app):
+    """(kind, genres, path) for every show and movie a server knows. A path ending in / is a show folder."""
+    if app == "plex":
+        for sec in [d for d in plex_get("/library/sections").get("Directory", []) if d["type"] in ("show", "movie")]:
             kind = "tv" if sec["type"] == "show" else "movies"
             items = plex_get(f"/library/sections/{sec['key']}/all").get("Metadata", [])
             for n, m in enumerate(items, 1):
-                PLEX["msg"] = f"reading {sec['title']} {n}/{len(items)}…"
+                MEDIA["msg"] = f"Plex: reading {sec['title']} {n}/{len(items)}…"
                 full = (plex_get(f"/library/metadata/{m['ratingKey']}").get("Metadata") or [m])[0]
                 genres = {g["tag"].lower() for g in full.get("Genre", []) or m.get("Genre", [])}
                 if kind == "tv":
@@ -621,34 +717,72 @@ def plex_sync():
                     files = [p["file"] for e in leaves for md in e.get("Media", []) for p in md.get("Part", [])]
                 else:
                     files = [p["file"] for md in full.get("Media", []) or m.get("Media", []) for p in md.get("Part", [])]
-                seen += 1
-                d = match_dir(idx, files[0]) if files else None
-                lib = library_of(d + os.sep + "x") if d else None
-                if not lib:
-                    unmatched.append(files[0] if files else m.get("title", "?"))
-                    continue
-                if not genres:
-                    no_genre += 1
-                    continue
-                key = item_key(os.path.join(d, "x"), lib)
-                plex_genres[key] = sorted(set(plex_genres.get(key, [])) | genres)
+                yield kind, genres, files[0] if files else ""
+    elif app in ("jellyfin", "emby"):
+        start = 0
+        while True:
+            d = jf_request(app, "/Items", Recursive="true", IncludeItemTypes="Movie,Series", Fields="Genres,Path",
+                           StartIndex=start, Limit=500)
+            items = d.get("Items", [])
+            MEDIA["msg"] = f"{SERVERS[app]}: reading {start + len(items)}/{d.get('TotalRecordCount', '?')}…"
+            for it in items:
+                tv = it.get("Type") == "Series"
+                path = it.get("Path") or ""
+                yield ("tv" if tv else "movies"), {g.lower() for g in it.get("Genres", [])}, (path.rstrip("/\\") + "/" if tv and path else path)
+            start += len(items)
+            if not items or start >= d.get("TotalRecordCount", 0):
+                break
+    elif app == "kodi":
+        MEDIA["msg"] = "Kodi: reading library…"
+        for m in kodi_rpc("VideoLibrary.GetMovies", {"properties": ["genre", "file"]}).get("movies", []):
+            f = m.get("file", "")
+            if f.startswith("stack://"):
+                f = f[8:].split(" , ")[0]
+            yield "movies", {g.lower() for g in m.get("genre", [])}, f
+        for t in kodi_rpc("VideoLibrary.GetTVShows", {"properties": ["genre", "file"]}).get("tvshows", []):
+            yield "tv", {g.lower() for g in t.get("genre", [])}, t.get("file", "")
+
+def media_sync():
+    """Read genres from every connected media server and match their shows/movies to your folders."""
+    try:
+        idx = local_dir_index()
+        if not idx:
+            raise ValueError("scan your libraries first so their folders are known")
+        found, notes = {}, []
+        for app in servers():
+            seen, unmatched = 0, []
+            try:
+                for kind, genres, path in server_items(app):
+                    seen += 1
+                    d = match_dir(idx, path + "x" if path.endswith(("/", "\\")) else path) if path else None
+                    lib = library_of(d + os.sep + "x") if d else None
+                    if not lib:
+                        unmatched.append(path or "?")
+                        continue
+                    if genres:
+                        key = item_key(os.path.join(d, "x"), lib)
+                        found.setdefault(app, {})[key] = sorted(set(found.get(app, {}).get(key, [])) | genres)
+                notes.append(f"{SERVERS[app]}: {seen - len(unmatched)} of {seen} matched to your folders"
+                             + (f" (not matched, e.g. {unmatched[0]})" if unmatched else ""))
+            except Exception as e:
+                notes.append(f"{SERVERS[app]} failed: {e}")
+                found.pop(app, None)
+                found.setdefault("_failed", []).append(app)
         with LOCK:
-            for g in GENRES.values():
-                g.pop("plex", None)
-            for key, g in plex_genres.items():
-                GENRES.setdefault(key, {})["plex"] = g
+            for app in servers():
+                if app in found.get("_failed", []):
+                    continue                           # keep what an unreachable server told us last time
+                for g in GENRES.values():
+                    g.pop(app, None)
+                for key, g in found.get(app, {}).items():
+                    GENRES.setdefault(key, {})[app] = g
             save_json(GENRES_PATH, GENRES)
             AUTO.clear()
-        msg = genre_report() + f"; {seen - len(unmatched)} of {seen} Plex items matched to scanned folders"
-        if no_genre:
-            msg += f"; {no_genre} have no genres in Plex"
-        if unmatched:
-            msg += f"; not matched, e.g. {unmatched[0]}"
-        PLEX["msg"] = msg
+        MEDIA["msg"] = genre_report() + ("; " + "; ".join(notes) if notes else "")
     except Exception as e:
-        PLEX["msg"] = f"failed: {e}"
+        MEDIA["msg"] = f"failed: {e}"
     finally:
-        PLEX["running"] = False
+        MEDIA["running"] = False
 
 NFO_GENRE = re.compile(r"<genre>\s*(.*?)\s*</genre>", re.I | re.S)
 
@@ -756,13 +890,20 @@ def genre_report():
                 counts[name] = counts.get(name, 0) + 1
     return f"{matched} of {total} shows/movies got a preset from their genres ({', '.join(f'{k} {v}' for k, v in sorted(counts.items())) or 'no rule matched'})"
 
-def plex_refresh():
-    try:
-        for sec in plex_get("/library/sections").get("Directory", []):
-            if sec["type"] in ("show", "movie"):
-                plex_get(f"/library/sections/{sec['key']}/refresh")
-    except Exception:
-        pass
+def refresh_servers():
+    """Ask every connected media server to pick up the changed files."""
+    for app in servers():
+        try:
+            if app == "plex":
+                for sec in plex_get("/library/sections").get("Directory", []):
+                    if sec["type"] in ("show", "movie"):
+                        plex_get(f"/library/sections/{sec['key']}/refresh")
+            elif app in ("jellyfin", "emby"):
+                jf_request(app, "/Library/Refresh", method="POST")
+            else:
+                kodi_rpc("VideoLibrary.Scan")
+        except Exception:
+            pass
 
 
 # ---------- encoding ----------
@@ -791,7 +932,8 @@ def probe_filters():
 def build_cmd(info, plan, p, out, hwaccel=True, clip=None, preview=False):
     """clip=(start_s, length_s) cuts a piece; preview=True makes a small MP4 (first audio track as AAC, no subs)."""
     enc, tone = CFG["encoder"], plan["hdr_to_sdr"]
-    ten_bit = info["hdr"] and not tone
+    ten_bit = (info["hdr"] and not tone) or bool(p.get("ten_bit"))
+    denoise = {"light": "hqdn3d=1.5:1.5:6:6", "medium": "hqdn3d=3:3:9:9"}.get(p.get("denoise", "none"))
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
     if hwaccel and CFG["hwaccel_decode"] not in ("", "none") and not plan.get("video_copy"):
         cmd += ["-hwaccel", CFG["hwaccel_decode"]]
@@ -850,6 +992,8 @@ def build_cmd(info, plan, p, out, hwaccel=True, clip=None, preview=False):
                 cmd += [opt[key], val]
     if (plan["out_w"], plan["out_h"]) != (info["width"], info["height"]):
         post.append(f"scale={plan['out_w']}:{plan['out_h']}:flags=lanczos")
+    if denoise:
+        (pre if overlay else post).append(denoise)    # before subtitles are burned in, so they stay sharp
     if burn is not None and not overlay:
         post.append("subtitles=filename=sub.ass:fontsdir=fonts")   # relative names: ffmpeg runs inside the work dir
     post.append("format=p010le" if ten_bit else "format=yuv420p")
@@ -1033,7 +1177,7 @@ def verify_held():
         _PROC["cancel"] = False
 
 def mark_ignored(folder, held_root):
-    for f, body in ((folder / ".plexignore", "*\n"), (held_root / ".ignore", "")):
+    for f, body in ((folder / ".plexignore", "*\n"), (held_root / ".ignore", ""), (held_root / ".nomedia", "")):
         if not f.exists():
             f.write_text(body)
 
@@ -1190,17 +1334,13 @@ def log_row(row):
             w.writerow(["time", "file", "status", "detail", "bytes_saved", "minutes"])
         w.writerow(row)
 
-_SESS = {"t": 0, "busy": False}
+_SESS = {"t": 0, "busy": False, "where": ""}
 
-def plex_streaming():
-    if not CFG["plex_url"] or not CFG["plex_token"]:
+def media_streaming():
+    if not servers():
         return False
     if time.time() - _SESS["t"] > 60:
-        try:
-            _SESS["busy"] = int(plex_get("/status/sessions").get("size", 0)) > 0
-        except Exception:
-            _SESS["busy"] = False
-        _SESS["t"] = time.time()
+        poll_sessions()
     return _SESS["busy"]
 
 def blocked_reason():
@@ -1213,8 +1353,8 @@ def blocked_reason():
         inside_window = a <= h < b if a < b else (h >= a or h < b)
         if not inside_window:
             return f"waiting for the encode window ({a:02d}:00-{b:02d}:00)"
-    if CFG["pause_when_streaming"] and plex_streaming():
-        return "paused: someone is watching Plex"
+    if CFG["pause_when_streaming"] and media_streaming():
+        return f"paused: someone is watching {_SESS.get('where') or 'something'}"
     return ""
 
 def worker():
@@ -1247,8 +1387,8 @@ def worker():
             save_cache()
     finally:
         QUEUE.update(running=False, stop=False, current=None, waiting="", force=False)
-        if CFG["plex_refresh"] and CFG["plex_url"] and QUEUE["saved"]:
-            plex_refresh()
+        if CFG["plex_refresh"] and servers() and QUEUE["saved"]:
+            refresh_servers()
         arr_rescan([i["path"] for i in QUEUE["items"] if i["status"] == "done"])
 
 def start_queue(force=False):
@@ -1317,7 +1457,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send({"app": "reclaimer", "version": VERSION})
         if path == "/api/state":
             with LOCK:
-                return self.send({"config": CFG, "scan": SCAN, "queue": QUEUE, "plex": PLEX, "preview": PREVIEW, "cached": len(CACHE),
+                return self.send({"config": CFG, "scan": SCAN, "queue": QUEUE, "media": MEDIA, "preview": PREVIEW, "cached": len(CACHE),
                                   "arr": ARR, "verify": VERIFY, "junk": {"running": JUNK["running"], "msg": JUNK["msg"], "items": JUNK["items"],
                                                        "cats": {k: {"label": v[0], "default": v[1]} for k, v in JUNK_CATS.items()}},
                                   "encoders": ["hevc_nvenc", "libx265"]})
@@ -1343,7 +1483,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/config":
             AUTO.clear()
             for k in ("libraries", "presets", "overrides", "encoder", "originals", "min_savings_percent", "show_rule", "tonemap",
-                      "hwaccel_decode", "plex_url", "plex_token", "plex_rules", "plex_refresh", "burn_subs_lang",
+                      "hwaccel_decode", "plex_url", "plex_token", "plex_rules", "plex_refresh", "jellyfin_url", "jellyfin_key",
+                      "emby_url", "emby_key", "kodi_url", "kodi_user", "kodi_password", "burn_subs_lang",
                       "window", "pause_when_streaming", "auto_mode", "auto_interval_min", "protected",
                       "audio_lang_filter", "audio_keep_langs", "audio_keep_unknown", "audio_keep_default", "notify",
                       "sonarr_url", "sonarr_key", "radarr_url", "radarr_key", "arr_guard", "arr_rescan", "verify", "verify_min_ssim"):
@@ -1369,13 +1510,13 @@ class Handler(BaseHTTPRequestHandler):
                 CFG["overrides"].pop(b["key"], None)
             save_json(CONFIG_PATH, CFG)
             return {"ok": True}
-        if path == "/api/plex/sync":
-            if PLEX["running"]:
+        if path == "/api/media/sync":
+            if MEDIA["running"]:
                 return {"error": "already syncing"}
-            if not CFG["plex_url"] or not CFG["plex_token"]:
-                return {"error": "set the Plex URL and token first"}
-            PLEX.update(running=True, msg="connecting…")
-            threading.Thread(target=plex_sync, daemon=True).start()
+            if not servers():
+                return {"error": "add a media server first (Plex, Jellyfin, Emby or Kodi)"}
+            MEDIA.update(running=True, msg="connecting…")
+            threading.Thread(target=media_sync, daemon=True).start()
             return {"ok": True}
         if path == "/api/scan":
             if SCAN["running"]:
@@ -1938,50 +2079,85 @@ def find_junk():
         JUNK["running"] = False
 
 
-# ---------- Plex transcode watcher ----------
-def watch_transcodes():
-    """Every 30 s, note anything Plex is transcoding instead of direct-playing, and why."""
-    counted = set()
-    while True:
-        time.sleep(30)
-        if MISSING or not CFG["plex_url"] or not CFG["plex_token"]:
-            continue
-        try:
-            sess = plex_get("/status/sessions")
-        except Exception:
-            continue
-        _SESS.update(busy=int(sess.get("size", 0)) > 0, t=time.time())
-        changed = False
-        for m in sess.get("Metadata", []):
+# ---------- media server sessions & transcode watcher ----------
+def server_sessions(app):
+    """What's playing on one server: [{file, device, title, what, session}]; what = parts being transcoded."""
+    out = []
+    if app == "plex":
+        for m in plex_get("/status/sessions").get("Metadata", []):
             ts = m.get("TranscodeSession") or {}
             parts = [p for md in m.get("Media", []) for p in md.get("Part", [])]
             burn = any(st.get("decision") == "burn" for p in parts for st in p.get("Stream", []))
             what = [k for k in ("video", "audio") if ts.get(f"{k}Decision") == "transcode"]
             if burn or ts.get("subtitleDecision") == "burn":
                 what.append("subtitles")
-            if not what or not parts:
-                continue
             player = m.get("Player") or {}
-            device = " ".join(x for x in (player.get("title"), f"({player.get('product') or player.get('platform') or ''})") if x and x != "()")
-            plex_file = parts[0].get("file", "")
-            d = match_dir(local_dir_index(), plex_file)
-            local = os.path.join(d, plex_file.replace("\\", "/").split("/")[-1]) if d else ""
-            key = f"{plex_file}|{device}"
-            title = " - ".join(x for x in (m.get("grandparentTitle"), m.get("title")) if x)
+            out.append({"file": parts[0].get("file", "") if parts else "", "session": m.get("sessionKey"), "what": what,
+                        "device": " ".join(x for x in (player.get("title"), f"({player.get('product') or player.get('platform') or ''})") if x and x != "()"),
+                        "title": " - ".join(x for x in (m.get("grandparentTitle"), m.get("title")) if x)})
+    elif app in ("jellyfin", "emby"):
+        for se in jf_request(app, "/Sessions", ActiveWithinSeconds=120):
+            npi = se.get("NowPlayingItem")
+            if not npi:
+                continue
+            what = []
+            if (se.get("PlayState") or {}).get("PlayMethod") == "Transcode":
+                ti = se.get("TranscodingInfo") or {}
+                what = [k for k, f in (("video", "IsVideoDirect"), ("audio", "IsAudioDirect")) if ti.get(f) is False]
+                if any("subtitle" in r.lower() for r in ti.get("TranscodeReasons") or []):
+                    what.append("subtitles")
+            out.append({"file": npi.get("Path", ""), "session": se.get("Id"), "what": what,
+                        "device": f"{se.get('DeviceName', '?')} ({se.get('Client', '')})".replace(" ()", ""),
+                        "title": " - ".join(x for x in (npi.get("SeriesName"), npi.get("Name")) if x)})
+    elif app == "kodi":                                 # Kodi plays files itself, so it never transcodes
+        for p in kodi_rpc("Player.GetActivePlayers") or []:
+            if p.get("type") == "video":
+                it = kodi_rpc("Player.GetItem", {"playerid": p["playerid"], "properties": ["file", "title", "showtitle"]}).get("item", {})
+                out.append({"file": it.get("file", ""), "session": p["playerid"], "what": [], "device": "Kodi",
+                            "title": " - ".join(x for x in (it.get("showtitle"), it.get("title") or it.get("label")) if x)})
+    return out
+
+_COUNTED = set()
+
+def poll_sessions():
+    """Check every server: is anyone watching (for the pause), and is anything being transcoded (for Health)."""
+    busy, where, changed = False, [], False
+    for app in servers():
+        try:
+            sessions = server_sessions(app)
+        except Exception:
+            continue
+        if sessions:
+            busy = True
+            where.append(SERVERS[app])
+        for m in sessions:
+            if not m["what"] or not m["file"]:
+                continue
+            d = match_dir(local_dir_index(), m["file"])
+            local = os.path.join(d, m["file"].replace("\\", "/").split("/")[-1]) if d else ""
+            key = f"{app}|{m['file']}|{m['device']}"
             with LOCK:
-                r = TRANSCODES.setdefault(key, {"file": plex_file, "local": local, "device": device, "title": title,
-                                                "what": [], "count": 0, "first": time.strftime("%Y-%m-%d %H:%M")})
-                r["what"] = sorted(set(r["what"]) | set(what))
+                r = TRANSCODES.setdefault(key, {"server": SERVERS[app], "file": m["file"], "local": local, "device": m["device"],
+                                                "title": m["title"], "what": [], "count": 0, "first": time.strftime("%Y-%m-%d %H:%M")})
+                r["what"] = sorted(set(r["what"]) | set(m["what"]))
                 r["last"] = time.strftime("%Y-%m-%d %H:%M")
-                sk = f"{m.get('sessionKey')}|{r['first']}"
-                if (key, sk) not in counted and r.get("last_session") != m.get("sessionKey"):
-                    counted.add((key, sk))
+                sk = f"{m['session']}|{r['first']}"
+                if (key, sk) not in _COUNTED and r.get("last_session") != m["session"]:
+                    _COUNTED.add((key, sk))
                     r["count"] += 1
-                r["last_session"] = m.get("sessionKey")
+                r["last_session"] = m["session"]
                 changed = True
-        if changed:
-            with LOCK:
-                save_json(TRANSCODES_PATH, TRANSCODES)
+    _SESS.update(busy=busy, where=" and ".join(where), t=time.time())
+    if changed:
+        with LOCK:
+            save_json(TRANSCODES_PATH, TRANSCODES)
+
+def watch_transcodes():
+    """Every 30 s while Reclaimer runs."""
+    while True:
+        time.sleep(30)
+        if not MISSING and servers():
+            poll_sessions()
 
 def transcode_list():
     out = []

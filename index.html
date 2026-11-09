@@ -81,16 +81,16 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <p class="help">Before you delete the originals in holding, check that every encoded replacement decodes cleanly, has full-length audio, and looks like its original. Anything that fails can be restored from its row on the Recommendations tab.</p>
  <div class="bar"><button id="vfGo" class="pri">Verify held files</button><span id="vfMsg" class="dim"></span></div>
  <table id="vfTable" style="display:none"><thead><tr><th>Original</th><th>Result</th></tr></thead><tbody id="vfBody"></tbody></table>
- <h3>Plex transcodes</h3>
- <p class="help">Every time Plex converts something on the fly instead of playing the file as-is, it's listed here with the device and what had to be converted. Anything that keeps showing up is a file worth fixing. Needs the Plex URL and token in Settings; Reclaimer checks every 30 seconds while it's running.</p>
+ <h3>Media server transcodes</h3>
+ <p class="help">Every time Plex, Jellyfin or Emby converts something on the fly instead of playing the file as-is, it's listed here with the device and what had to be converted. Anything that keeps showing up is a file worth fixing. Needs a media server in Settings; Reclaimer checks every 30 seconds while it's running. (Kodi plays files itself, so it never transcodes.)</p>
  <div class="bar"><span class="grow"></span><button id="tcClear">Clear list</button></div>
- <table><thead><tr><th>What was playing</th><th>Device</th><th>Converted</th><th class="num">Times</th><th>Last</th><th>Reclaimer</th></tr></thead><tbody id="tcBody"></tbody></table>
+ <table><thead><tr><th>What was playing</th><th>Device</th><th>Server</th><th>Converted</th><th class="num">Times</th><th>Last</th><th>Reclaimer</th></tr></thead><tbody id="tcBody"></tbody></table>
  <h3>Sonarr / Radarr</h3>
  <div id="hArr" class="help"></div>
 </section>
 <section id="presets">
- <p class="help">Caps are the HEVC video bitrate ceiling in Mbps per output resolution. CQ is the NVENC quality knob (lower = better and bigger; 22–28 is the useful range). Audio: <b>stereo</b> = AAC 2.0 160k, <b>surround</b> = keep up to 5.1, lossless/DTS becomes E-AC3 448k, <b>keep</b> = untouched. <b>Burn subs</b>: styled ASS/SSA subtitles (and optionally PGS/VobSub image subs) in your language (Settings) are burned into the picture when the file has no audio in that language and no plain SRT subs in it; forced and signs/songs tracks are ignored. Roku and Xbox can't show these formats without Plex transcoding; plain SRT plays everywhere and is never burned.</p>
- <table><thead><tr><th>Preset</th><th>Max res</th><th>2160 cap</th><th>1080 cap</th><th>720 cap</th><th>480 cap</th><th>CQ</th><th>Audio</th><th>HDR→SDR</th><th>Burn subs</th><th></th></tr></thead><tbody id="pBody"></tbody></table>
+ <p class="help">Caps are the HEVC video bitrate ceiling in Mbps per output resolution. CQ is the NVENC quality knob (lower = better and bigger; 22–28 is the useful range). Audio: <b>stereo</b> = AAC 2.0 160k, <b>surround</b> = keep up to 5.1, lossless/DTS becomes E-AC3 448k, <b>keep</b> = untouched. Caps are for normal frame rates; 50/60 fps video automatically gets 1.5× the cap. <b>10-bit</b> prevents banding in dark scenes and smooth gradients (every modern device plays it). <b>Grain cleanup</b> smooths film grain before encoding, which saves a lot of space on older or grainy films at the cost of some texture; preview it first. <b>Burn subs</b>: styled ASS/SSA subtitles (and optionally PGS/VobSub image subs) in your language (Settings) are burned into the picture when the file has no audio in that language and no plain SRT subs in it; forced and signs/songs tracks are ignored. Roku and Xbox can't show these formats without Plex transcoding; plain SRT plays everywhere and is never burned.</p>
+ <table><thead><tr><th>Preset</th><th>Max res</th><th>2160 cap</th><th>1080 cap</th><th>720 cap</th><th>480 cap</th><th>CQ</th><th>Audio</th><th>HDR→SDR</th><th title="10-bit colour avoids banding in dark scenes and gradients">10-bit</th><th title="clean up film grain before encoding; grain costs a lot of bitrate">Grain cleanup</th><th>Burn subs</th><th></th></tr></thead><tbody id="pBody"></tbody></table>
  <div class="bar" style="margin-top:10px"><input type="text" id="newPreset" placeholder="new preset name" style="width:220px"><button id="addPreset">Add preset</button><span class="grow"></span><button id="savePresets" class="pri">Save presets</button></div>
 </section>
 <section id="settings">
@@ -117,16 +117,23 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <div class="bar"><label class="dim"><input type="checkbox" id="arrGuard"> never shrink below a Sonarr/Radarr cutoff</label>
   <label class="dim"><input type="checkbox" id="arrRescan"> ask them to rescan after changes</label>
   <button id="arrSync">Connect &amp; sync</button><span id="arrMsg" class="dim"></span></div>
- <h3>Plex</h3>
- <p class="help">Optional. With a server URL and token, <b>Sync genres</b> reads every show's and movie's genres from Plex and assigns presets by the rules below (first match wins; <code>Documentary+Crime</code> means both genres; manual overrides always win over these). It also runs by itself after every full scan. Token: in Plex Web open any item → ⋯ → Get Info → View XML, then copy the <code>X-Plex-Token</code> value from that page's URL.</p>
- <div class="bar">URL <input type="text" id="plexUrl" placeholder="http://mynas:32400" style="width:240px"> Token <input type="text" id="plexToken" style="width:220px">
-  <label class="dim"><input type="checkbox" id="plexRefresh"> rescan Plex libraries when the queue finishes</label>
+ <h3>Media servers</h3>
+ <p class="help">Optional; add whichever you use (any combination works). Reclaimer reads each show's and movie's genres from them to pick presets, pauses encoding while someone is watching, lists transcodes on the Health tab, and asks them to rescan after changes.
+  <b>Plex</b> token: in Plex Web open any item → ⋯ → Get Info → View XML, then copy the <code>X-Plex-Token</code> value from that page's URL.
+  <b>Jellyfin / Emby</b>: create an API key under Dashboard → API Keys. <b>Kodi</b>: turn on Settings → Services → Control → "Allow remote control via HTTP"; the URL is the device's address and port (usually 8080), plus the username/password set there.</p>
+ <div class="bar" style="flex-wrap:nowrap"><b style="width:70px">Plex</b>URL <input type="text" id="plexUrl" placeholder="http://mynas:32400" style="width:220px"> Token <input type="text" id="plexToken" style="width:240px"></div>
+ <div class="bar" style="flex-wrap:nowrap"><b style="width:70px">Jellyfin</b>URL <input type="text" id="jfUrl" placeholder="http://mynas:8096" style="width:220px"> API key <input type="text" id="jfKey" style="width:240px"></div>
+ <div class="bar" style="flex-wrap:nowrap"><b style="width:70px">Emby</b>URL <input type="text" id="embyUrl" placeholder="http://mynas:8096" style="width:220px"> API key <input type="text" id="embyKey" style="width:240px"></div>
+ <div class="bar" style="flex-wrap:nowrap"><b style="width:70px">Kodi</b>URL <input type="text" id="kodiUrl" placeholder="http://livingroom:8080" style="width:220px"> User <input type="text" id="kodiUser" style="width:110px"> Password <input type="password" id="kodiPass" style="width:110px"></div>
+ <div class="bar"><label class="dim"><input type="checkbox" id="plexRefresh"> ask them to rescan when the queue finishes</label>
   <button id="plexSync">Sync genres</button><span id="plexMsg" class="dim"></span></div>
- <table style="max-width:640px"><thead><tr><th>Plex genre</th><th>TV preset</th><th>Movie preset</th><th></th></tr></thead><tbody id="ruleBody"></tbody></table>
+ <h3>Genre rules</h3>
+ <p class="help">Genres come from your NFO files and every media server above. First matching rule wins; <code>Documentary+Crime</code> means both genres, <code>Reality|Game Show</code> means either one. Manual overrides on the Recommendations tab always win. A blank preset leaves the library's default.</p>
+ <table style="max-width:640px"><thead><tr><th>Genre</th><th>TV preset</th><th>Movie preset</th><th></th></tr></thead><tbody id="ruleBody"></tbody></table>
  <div class="bar" style="margin-top:6px"><button id="addRule">Add rule</button></div>
  <h3>Schedule</h3>
  <div class="bar"><label class="dim"><input type="checkbox" id="winOn"> only encode between</label> <input type="number" id="winStart" min="0" max="23"> and <input type="number" id="winEnd" min="0" max="23"> o'clock
-  &nbsp; <label class="dim"><input type="checkbox" id="pauseStream"> pause while someone is watching Plex</label></div>
+  &nbsp; <label class="dim"><input type="checkbox" id="pauseStream"> pause while someone is watching (Plex, Jellyfin, Emby or Kodi)</label></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="autoMode"> <b>auto mode</b>: rescan, queue and encode on its own every</label> <input type="number" id="autoInt" min="5"> minutes <span class="help" style="margin:0">(leave it running in the tray; new downloads get picked up)</span></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="notify"> show a Windows notification when a batch finishes</label></div>
  <div class="bar"><button id="saveSettings" class="pri">Save settings</button><span id="setMsg" class="dim"></span></div>
@@ -140,7 +147,7 @@ const gb=b=>b>=1e12?(b/1e12).toFixed(2)+' TB':b>=1e9?(b/1e9).toFixed(1)+' GB':(b
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let vfWas=false;
 let junkWas=false, dupes=[], junkSel=null;
-let S={}, recs=[], sel=new Set(), open=new Set(), scanWas=false, plexWas=false, prevWas=false, heldTotal=0;
+let S={}, recs=[], sel=new Set(), open=new Set(), scanWas=false, mediaWas=false, prevWas=false, heldTotal=0;
 const jsArg=v=>esc(JSON.stringify(String(v)));
 let toastTimer;
 function toast(m,bad){const t=$('#toast');t.textContent=m;t.className=bad?'bad':'';t.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.style.display='none',bad?Math.max(8000,m.length*90):Math.max(2500,m.length*60))}
@@ -153,16 +160,16 @@ async function poll(){
   $('#status').textContent=sc.running?(sc.phase||`scanning ${sc.done}/${sc.total}…`):sc.error?'scan error: '+sc.error:q.running?`encoding (${q.items.filter(i=>i.status=='queued').length} queued)`:`${S.cached} files known`;
   $('#scanBtn').disabled=sc.running;
   if(scanWas&&!sc.running){loadRecs();loadLangs();if(sc.genres)toast(sc.genres)} scanWas=sc.running;
-  $('#plexMsg').textContent=S.plex.msg||'';$('#arrMsg').textContent=S.arr.msg||'';$('#arrSync').disabled=S.arr.running;
+  $('#plexMsg').textContent=S.media.msg||'';$('#arrMsg').textContent=S.arr.msg||'';$('#arrSync').disabled=S.arr.running;
   $('#junkMsg').textContent=S.junk.msg||'';
   const V=S.verify||{};$('#vfGo').disabled=V.running;$('#vfMsg').textContent=V.running?`${V.msg} (${V.done}/${V.total})`:(V.msg||'');
   if((V.running||vfWas)&&$('#health').classList.contains('on'))renderVerify(V); vfWas=V.running;$('#junkFind').disabled=S.junk.running;
-  if(junkWas&&!S.junk.running&&$('#cleanup').classList.contains('on'))renderJunk(); junkWas=S.junk.running; $('#plexSync').disabled=S.plex.running;
+  if(junkWas&&!S.junk.running&&$('#cleanup').classList.contains('on'))renderJunk(); junkWas=S.junk.running; $('#plexSync').disabled=S.media.running;
   if(S.preview.running)$('#status').textContent=`making preview ${(S.preview.progress||0).toFixed(0)}%`;
   if(prevWas&&!S.preview.running){toast(S.preview.msg);if(S.preview.url)window.open(S.preview.url,'_blank')} prevWas=S.preview.running;
   const fr=$('#firstRun');fr.style.display=S.config.libraries.length?'none':'block';
   if(!S.config.libraries.length&&!$('#frPreset').options.length)$('#frPreset').innerHTML=Object.keys(S.config.presets).map(n=>`<option>${esc(n)}</option>`).join('');
-  if(plexWas&&!S.plex.running){loadRecs()} plexWas=S.plex.running;
+  if(mediaWas&&!S.media.running){loadRecs()} mediaWas=S.media.running;
   renderQueue(); fillPresetSelects(); if(!$('#settings').dataset.init){renderSettings();renderPresets();$('#settings').dataset.init=1}
 }
 function fillPresetSelects(){
@@ -225,12 +232,12 @@ function renderPresets(){
   $('#pBody').innerHTML=Object.entries(P).map(([n,p])=>`<tr data-n="${esc(n)}"><td>${esc(n)}</td><td><select class="mh">${[2160,1440,1080,720,480].map(h=>`<option ${h==p.max_height?'selected':''}>${h}</option>`).join('')}</select></td>
    ${['2160','1080','720','480'].map(t=>`<td><input type="number" step="0.5" class="cap" data-t="${t}" value="${p.caps[t]??''}"></td>`).join('')}
    <td><input type="number" class="cq" min="15" max="40" value="${p.cq}"></td><td><select class="au">${['stereo','surround','keep'].map(a=>`<option ${a==p.audio?'selected':''}>${a}</option>`).join('')}</select></td>
-   <td><input type="checkbox" class="hdr" ${p.hdr_to_sdr?'checked':''}></td><td><select class="burn">${[['none','none'],['ass','ASS/SSA only'],['ass+image','ASS + PGS/VobSub']].map(([v,t])=>`<option value="${v}" ${(p.burn_subs===true?'ass':p.burn_subs||'none')==v?'selected':''}>${t}</option>`).join('')}</select></td><td><button class="del">✕</button></td></tr>`).join('');
+   <td><input type="checkbox" class="hdr" ${p.hdr_to_sdr?'checked':''}></td><td><input type="checkbox" class="tenbit" ${p.ten_bit?'checked':''}></td><td><select class="dn">${[['none','none'],['light','light'],['medium','medium']].map(([v,t])=>`<option value="${v}" ${(p.denoise||'none')==v?'selected':''}>${t}</option>`).join('')}</select></td><td><select class="burn">${[['none','none'],['ass','ASS/SSA only'],['ass+image','ASS + PGS/VobSub']].map(([v,t])=>`<option value="${v}" ${(p.burn_subs===true?'ass':p.burn_subs||'none')==v?'selected':''}>${t}</option>`).join('')}</select></td><td><button class="del">✕</button></td></tr>`).join('');
   document.querySelectorAll('#pBody .del').forEach(b=>b.onclick=()=>{b.closest('tr').remove()});
 }
 function readPresets(){const out={};document.querySelectorAll('#pBody tr').forEach(tr=>{const caps={};tr.querySelectorAll('.cap').forEach(i=>{if(i.value)caps[i.dataset.t]=+i.value});
-  out[tr.dataset.n]={max_height:+tr.querySelector('.mh').value,caps,cq:+tr.querySelector('.cq').value,audio:tr.querySelector('.au').value,hdr_to_sdr:tr.querySelector('.hdr').checked,burn_subs:tr.querySelector('.burn').value}});return out}
-$('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return;S.config.presets=readPresets();S.config.presets[n]={max_height:1080,caps:{1080:5,720:3,480:1.5},cq:26,audio:'stereo',hdr_to_sdr:true,burn_subs:'none'};$('#newPreset').value='';renderPresets()};
+  out[tr.dataset.n]={max_height:+tr.querySelector('.mh').value,caps,cq:+tr.querySelector('.cq').value,audio:tr.querySelector('.au').value,hdr_to_sdr:tr.querySelector('.hdr').checked,ten_bit:tr.querySelector('.tenbit').checked,denoise:tr.querySelector('.dn').value,burn_subs:tr.querySelector('.burn').value}});return out}
+$('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return;S.config.presets=readPresets();S.config.presets[n]={max_height:1080,caps:{1080:5,720:3,480:1.5},cq:26,audio:'stereo',hdr_to_sdr:true,burn_subs:'none',ten_bit:false,denoise:'none'};$('#newPreset').value='';renderPresets()};
 $('#savePresets').onclick=async()=>{const presets=readPresets();for(const p of Object.values(presets))if(!Object.keys(p.caps).length)return toast('every preset needs at least one cap');await api('/api/config',{presets});toast('presets saved');S=await api('/api/state');loadRecs()};
 
 function renderSettings(){
@@ -243,16 +250,18 @@ function renderSettings(){
   $('#sonUrl').value=c.sonarr_url||'';$('#sonKey').value=c.sonarr_key||'';$('#radUrl').value=c.radarr_url||'';$('#radKey').value=c.radarr_key||'';
   $('#arrGuard').checked=c.arr_guard!==false;$('#arrRescan').checked=c.arr_rescan!==false;
   $('#plexUrl').value=c.plex_url||'';$('#plexToken').value=c.plex_token||'';$('#plexRefresh').checked=!!c.plex_refresh;
+  $('#jfUrl').value=c.jellyfin_url||'';$('#jfKey').value=c.jellyfin_key||'';$('#embyUrl').value=c.emby_url||'';$('#embyKey').value=c.emby_key||'';
+  $('#kodiUrl').value=c.kodi_url||'';$('#kodiUser').value=c.kodi_user||'';$('#kodiPass').value=c.kodi_password||'';
   $('#ruleBody').innerHTML=(c.plex_rules||[]).map(ruleRow).join('');bindRules();
 }
 async function loadLangs(){const L=await api('/api/languages',{});if(!L.length)return;const keep=new Set(S.config.audio_keep_langs||[]);
-  $('#langBody').innerHTML=L.map(l=>`<tr><td><input type="checkbox" class="lk" value="${esc(l.lang)}" ${keep.has(l.lang)?'checked':''}></td><td>${esc(l.name)} <span class="dim">${esc(l.lang)}</span></td><td class="num">${l.files}</td><td class="num">${gb(l.bytes)}</td><td class="num dim">${l.only} files</td></tr>`).join('')}
+  $('#langBody').innerHTML=L.map(l=>`<tr><td><input type="checkbox" class="lk" value="${esc(l.lang)}" ${keep.has(l.lang)?'checked':''}></td><td>${esc(l.name)} <span class="dim">${esc(l.lang)}</span>${l.guessed?` <span class="dim" title="these tracks had no language tag; their track title named the language">(${l.guessed} from track titles)</span>`:''}</td><td class="num">${l.files}</td><td class="num">${gb(l.bytes)}</td><td class="num dim">${l.only} files</td></tr>`).join('')}
 const presetOpts=v=>'<option value="">(library default)</option>'+Object.keys(S.config.presets).map(n=>`<option ${n==v?'selected':''}>${esc(n)}</option>`).join('');
 const ruleRow=r=>`<tr><td><input type="text" class="rg" value="${esc(r.genre)}"></td><td><select class="rt">${presetOpts(r.tv)}</select></td><td><select class="rm">${presetOpts(r.movies)}</select></td><td><button class="del">✕</button></td></tr>`;
 function bindRules(){document.querySelectorAll('#ruleBody .del').forEach(b=>b.onclick=()=>b.closest('tr').remove())}
 $('#addRule').onclick=()=>{$('#ruleBody').insertAdjacentHTML('beforeend',ruleRow({genre:'',tv:'',movies:''}));bindRules()};
 const readRules=()=>[...document.querySelectorAll('#ruleBody tr')].map(r=>({genre:r.querySelector('.rg').value.trim(),tv:r.querySelector('.rt').value,movies:r.querySelector('.rm').value})).filter(r=>r.genre);
-$('#plexSync').onclick=async()=>{await $('#saveSettings').onclick();const r=await api('/api/plex/sync',{});poll()};
+$('#plexSync').onclick=async()=>{await $('#saveSettings').onclick();const r=await api('/api/media/sync',{});poll()};
 const libRow=l=>`<div class="row"><input type="text" class="lp" value="${esc(l.path)}" placeholder="\\\\mynas\\video\\Movies"><select class="lt"><option value="movies" ${l.type=='movies'?'selected':''}>movies</option><option value="tv" ${l.type=='tv'?'selected':''}>tv</option></select><select class="lpr">${Object.keys(S.config.presets).map(n=>`<option ${n==l.preset?'selected':''}>${esc(n)}</option>`).join('')}</select><button class="del">✕</button></div>`;
 function bindLibs(){document.querySelectorAll('#libs .del').forEach(b=>b.onclick=()=>b.closest('.row').remove())}
 $('#addLib').onclick=()=>{$('#libs').insertAdjacentHTML('beforeend',libRow({path:'',type:'movies',preset:'Movies HD'}));bindLibs()};
@@ -263,7 +272,9 @@ $('#saveSettings').onclick=async()=>{const libraries=[...document.querySelectorA
     audio_keep_langs:document.querySelectorAll('#langBody .lk').length?[...document.querySelectorAll('#langBody .lk:checked')].map(i=>i.value):S.config.audio_keep_langs,
     sonarr_url:$('#sonUrl').value.trim(),sonarr_key:$('#sonKey').value.trim(),radarr_url:$('#radUrl').value.trim(),radarr_key:$('#radKey').value.trim(),
     arr_guard:$('#arrGuard').checked,arr_rescan:$('#arrRescan').checked,
-    plex_url:$('#plexUrl').value.trim(),plex_token:$('#plexToken').value.trim(),plex_refresh:$('#plexRefresh').checked,plex_rules:readRules()});
+    plex_url:$('#plexUrl').value.trim(),plex_token:$('#plexToken').value.trim(),plex_refresh:$('#plexRefresh').checked,plex_rules:readRules(),
+    jellyfin_url:$('#jfUrl').value.trim(),jellyfin_key:$('#jfKey').value.trim(),emby_url:$('#embyUrl').value.trim(),emby_key:$('#embyKey').value.trim(),
+    kodi_url:$('#kodiUrl').value.trim(),kodi_user:$('#kodiUser').value.trim(),kodi_password:$('#kodiPass').value});
   $('#setMsg').textContent='saved';S=await api('/api/state');fillPresetSelects();loadRecs()};
 // ---------- cleanup ----------
 const short=p=>{const l=(S.config.libraries||[]).find(l=>p.toLowerCase().startsWith(l.path.toLowerCase()));return l?l.path.split(/[\\/]/).filter(Boolean).slice(-2).join('/')+' › '+p.slice(l.path.length).replace(/^[\\/]/,''):p};
@@ -304,10 +315,10 @@ async function loadHealth(){
   drawChart(h.series);
   const libs=h.by_lib.filter(l=>l.saved>0),mx=Math.max(1,...libs.map(l=>l.saved));
   $('#hLibs').innerHTML=libs.length?'<table style="table-layout:fixed">'+libs.map(l=>`<tr><td style="width:30%">${esc(short(l.lib+'/').replace(/ › $/,''))}</td><td style="width:55%"><div class="bar1" style="width:${(l.saved/mx*100).toFixed(1)}%" title="${gb(l.saved)}"></div></td><td class="num">${gb(l.saved)}</td></tr>`).join('')+'</table>':'';
-  $('#tcBody').innerHTML=H.transcodes.length?H.transcodes.map(t=>`<tr><td>${esc(t.title||t.file.split(/[\\/]/).pop())}<br><span class="dim">${esc(t.codec?t.codec+' · '+t.audio+(t.subs?' · subs: '+t.subs:''):'not in your scanned libraries')}</span></td><td>${esc(t.device)}</td>
+  $('#tcBody').innerHTML=H.transcodes.length?H.transcodes.map(t=>`<tr><td>${esc(t.title||t.file.split(/[\\/]/).pop())}<br><span class="dim">${esc(t.codec?t.codec+' · '+t.audio+(t.subs?' · subs: '+t.subs:''):'not in your scanned libraries')}</span></td><td>${esc(t.device)}</td><td class="dim">${esc(t.server||'Plex')}</td>
     <td>${t.what.map(w=>`<span class="tag warn">${w}</span>`).join('')}</td><td class="num">${t.count}</td><td class="dim">${esc(t.last||'')}</td>
     <td>${t.rec?(t.rec.action=='encode'?`<a href="#" onclick="queueOne(${jsArg(t.local)});return false">queue fix</a> <span class="dim">${esc(t.rec.reasons.join(', '))}</span>`:`<span class="dim">${esc(t.rec.action)} ${esc(t.rec.reasons.join(', '))}</span>`):''}</td></tr>`).join('')
-    :'<tr><td colspan="6" class="dim">Nothing transcoded yet. That is what you want.</td></tr>';
+    :'<tr><td colspan="7" class="dim">Nothing transcoded yet. That is what you want.</td></tr>';
   $('#hArr').innerHTML=(H.arr_msg?esc(H.arr_msg)+'<br>':(H.arr_items?'':'Not connected (Settings → Sonarr / Radarr).<br>'))+
     H.arr.map(a=>`${a.app} profile <b>${esc(a.profile)}</b> wants at least ${a.cutoff}p, so ${a.files} files in ${a.items} shows/movies are kept at ${a.cutoff}p instead of going smaller. Lower that profile's cutoff in ${a.app} if you want them smaller.`).join('<br>');
 }

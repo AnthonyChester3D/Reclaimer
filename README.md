@@ -1,6 +1,6 @@
 # Reclaimer
 
-Finds what got lost in a Plex media library (the 4K episode in a 720p season, the movie ten times the size it deserves, the audio tracks nobody listens to) and cleans it up. Scans with ffprobe, recommends where space can be saved, and re-encodes on the GPU to HEVC that every device in the house direct-plays (Xbox One X, Roku Ultra, iPhone/iPad, Android, PC).
+Finds what got lost in a Plex, Jellyfin, Emby or Kodi media library (the 4K episode in a 720p season, the movie ten times the size it deserves, the audio tracks nobody listens to) and cleans it up. Scans with ffprobe, recommends where space can be saved, and re-encodes on the GPU to HEVC that every device in the house direct-plays (Xbox One X, Roku Ultra, iPhone/iPad, Android, PC).
 
 ## Setup (Windows main PC)
 
@@ -34,21 +34,41 @@ Messages that used to go to the console are written to `reclaimer_run.log`. To r
 
 ## Running on its own
 
-Settings → Schedule: limit encoding to a window (say 1:00–8:00) and pause while someone is watching Plex (it checks the Plex sessions every minute, since encoding reads big files off the same NAS). Turn on **auto mode** and it rescans every 30 minutes, queues whatever your presets recommend and encodes it inside the window — leave the window open and new Sonarr/Radarr downloads get handled. **Start now** on the Queue tab ignores the schedule for one run.
+Settings → Schedule: limit encoding to a window (say 1:00–8:00) and pause while someone is watching on any connected media server (it checks the Plex sessions every minute, since encoding reads big files off the same NAS). Turn on **auto mode** and it rescans every 30 minutes, queues whatever your presets recommend and encodes it inside the window — leave the window open and new Sonarr/Radarr downloads get handled. **Start now** on the Queue tab ignores the schedule for one run.
 
 ## Automatic presets from genres
 
-Every scan reads the `.nfo` files Sonarr, Radarr and Kodi keep next to your media: `tvshow.nfo` in a show's folder, `movie.nfo` or `<movie name>.nfo` in a movie's folder. If a show has no `tvshow.nfo`, the genres at least half of its episode NFOs agree on are used. A show always gets one preset as a whole, even if single episodes are tagged differently.
+Every scan reads the `.nfo` files Sonarr, Radarr and Kodi keep next to your media: `tvshow.nfo` in a show's folder, `movie.nfo` or `<movie name>.nfo` in a movie's folder. If a show has no `tvshow.nfo`, the genres at least half of its episode NFOs agree on are used. A show always gets one preset as a whole.
 
-These genres are combined with Plex's (below), then matched against the rules table in Settings → Plex. Hover over the tag next to a preset to see which genres it came from. A yellow tag means a show or movie has genres but no rule matched them; add a rule for those genres if you like. After each scan, a message says how many shows and movies got their preset from genres.
+These are combined with the genres from any connected media server and matched against **Settings → Genre rules** (first match wins; `A+B` = both genres, `A|B` = either). Hover over the tag next to a preset to see where its genres came from; a yellow tag means no rule matched. The default rules:
 
-## Plex genre sync (optional)
+| Genres | TV | Movies |
+|---|---|---|
+| Anime | Anime | Anime |
+| Documentary + Crime, True Crime | True Crime | True Crime |
+| Reality, Game Show, Talk Show, News, Stand-Up | Talk & Reality | Talk & Reality |
+| Concert, Music + Documentary | Concerts | Concerts |
+| Education, How-To, Lecture | Lectures | Lectures |
+| Animation | Cartoons HD (SD for SD-only shows) | CG Animation |
+| Sport, Sports | Sports | library default (sports *movies* are ordinary films) |
+| Documentary | Documentary | Documentary |
+| Horror | Dark & Moody | Dark & Moody |
+| Children, Kids | Sitcom | library default |
+| Science Fiction, Fantasy, Action, War, Western | Cinematic TV | library default |
+| Comedy, Soap | Sitcom | library default |
 
-Instead of hand-picking Anime/Cartoons shows, let Plex do it. In Settings → Plex enter your server URL (`http://mynas:32400`) and token, scan the library first, then **Sync genres**. Every show and movie gets a preset by the rules table. Defaults: *Anime* → Anime; *Documentary + Crime* (or *True Crime*) → True Crime; *Animation* → Cartoons HD for TV, CG Animation for movies (Cartoons SD is picked automatically for SD-only content); *Comedy* TV → Sitcom. `A+B` in a rule means the item needs both genres. Cinematic TV has no rule, since Plex genres can't tell an HBO drama from a procedural; assign it by hand. The sync also runs on its own after every full scan, and its status line says how many items matched and gives an example of one that didn't. First matching rule wins; manual overrides in the Recommendations tab always win over Plex. Re-run the sync whenever Plex gains new shows.
+Everything else uses the library's default preset (e.g. Movies HD for ordinary films, Live Action TV for dramas). **Classic Film** and **TV 4K** have no rule; assign them by hand to grainy older films and to shows you want to keep in 4K.
 
-Token: in Plex Web open any item → ⋯ → Get Info → View XML, and copy the `X-Plex-Token` value from that page's URL.
+## Media servers
 
-With "rescan Plex libraries when the queue finishes" ticked, Plex is asked to rescan after each batch so it picks up the new files right away.
+Settings → Media servers takes any combination of **Plex** (URL + token), **Jellyfin** and **Emby** (URL + API key from Dashboard → API Keys) and **Kodi** (URL of its web server, usually port 8080, with "Allow remote control via HTTP" on). With them connected, Reclaimer:
+
+- reads every show's and movie's genres (paths are matched to your folders automatically, whether the server sees `/volume1/...`, `/media/...` or `smb://...`);
+- pauses encoding while anyone is watching on any of them;
+- lists anything Plex, Jellyfin or Emby has to transcode on the Health tab (Kodi plays files itself, so it never transcodes);
+- asks them all to rescan after a batch.
+
+Only Plex has been tried against a real server; Jellyfin, Emby and Kodi follow their published APIs and were tested against simulated servers. If one misbehaves, the status line next to **Sync genres** says what went wrong.
 
 ## How it decides
 
@@ -83,7 +103,7 @@ If Reclaimer shrinks an episode below the quality Sonarr is set to want (the pro
 
 ## Cleanup tab
 
-**Duplicates**: the same movie or episode in more than one place, typically once in your old library and once in the Sonarr/Radarr one, or two versions of a movie in one folder. Matching uses the ids in NFO files and folder names (`{tmdb-603}`), then title and year. Multi-episode files and cd1/cd2 parts are never counted as duplicates. Reclaimer suggests a copy to keep; pick another with the radio buttons. It will never remove every copy of something.
+**Duplicates**: the same movie or episode in more than one place, typically once in your old library and once in the Sonarr/Radarr one, or two versions of a movie in one folder. Matching uses the ids in NFO files and folder names (`{tmdb-603}`), then title and year. Multi-episode files and cd1/cd2 parts are never counted as duplicates. Reclaimer suggests a copy to keep; pick another with the radio buttons. Nothing is ticked until you tick it, and it will never remove every copy of something. Two movies only count as the same when their ids, titles and years agree, and episodes need the same year and episode title, not just the same SxxEyy number.
 
 **Junk**: sample clips, unfinished downloads and stale temp files, archives that were already extracted, release clutter (`.txt`, `.url`, `.exe`…), and, unticked by default, stray subtitle files, extras and show/movie folders with no video left.
 
@@ -92,7 +112,7 @@ Both move things to `.reclaimer_removed` inside the library, which **restore** o
 ## Health tab
 
 - Space reclaimed so far, how much is still sitting in holding folders, and an estimate of what's left to reclaimer, with a chart over time and a per-library breakdown.
-- **Plex transcodes**: while Reclaimer runs it checks Plex every 30 seconds, and lists anything Plex had to convert on the fly instead of direct-playing: which device, and whether it was the video, audio or subtitles. Files that keep appearing here are the ones to fix first; **queue fix** queues the file if Reclaimer has a recommendation for it.
+- **Media server transcodes**: while Reclaimer runs it checks the connected servers every 30 seconds and lists anything Plex, Jellyfin or Emby had to convert on the fly instead of direct-playing: which device, and whether it was the video, audio or subtitles. Files that keep appearing are the ones to fix first; **queue fix** queues the file if Reclaimer has a recommendation for it.
 - The Sonarr/Radarr status.
 
 ## Protecting files (family videos etc.)
@@ -117,7 +137,7 @@ A good encode typically scores 0.93-0.99, and the score is shown in the queue an
 ## Safety
 
 - Encodes go to a hidden temp file and only replace the original after a duration and audio-track check, and only if actually 15%+ smaller. Ctrl+C or **Cancel current** leaves the original untouched.
-- Originals are moved to `.reclaimer_originals` inside each library, with `.plexignore`/`.ignore` files so Plex ignores them. **No space is freed until you click Delete all** (or delete that folder). Each show/movie row has a **restore** link while its originals are held. Switch Settings → Originals to "delete" once you trust the results.
+- Originals are moved to `.reclaimer_originals` inside each library, with `.plexignore`/`.ignore`/`.nomedia` files so Plex ignores them. **No space is freed until you click Delete all** (or delete that folder). Each show/movie row has a **restore** link while its originals are held. Switch Settings → Originals to "delete" once you trust the results.
 - Every output carries a `RECLAIMER` tag so it's never encoded twice. Failed or rejected files are remembered (`reclaimer_state.json`); click "retry" next to them to try again.
 - `reclaimer_log.csv` has the history of every encode.
 
@@ -136,5 +156,13 @@ A good encode typically scores 0.93-0.99, and the score is shown in the queue an
 | Sitcom | 1080p | 3 | 2 | 1.2 | 27 | stereo | none |
 | True Crime | 720p | | 1.8 | 1 | 28 | stereo | none |
 | CG Animation | 1080p | 5 | 3 | 1.5 | 25 | surround | none |
+| Talk & Reality | 720p | | 1.8 | 1 | 28 | stereo | none |
+| Documentary | 1080p | 6 | 3.5 | 1.8 | 24 | stereo | none |
+| Concerts | 1080p | 8 | 4 | 2 | 24 | surround | none |
+| Sports | 1080p | 8 | 5 | 2.5 | 23 | surround | none |
+| Classic Film (grain cleanup) | 1080p | 10 | 5 | 2.5 | 23 | surround | none |
+| Dark & Moody (10-bit) | 1080p | 9 | 4.5 | 2 | 23 | surround | none |
+| Lectures | 720p | | 1 | 0.6 | 30 | stereo | none |
+| TV 4K (HDR kept) | 2160p, 12 Mbps at 4K | 6 | 3.5 | 1.5 | 25 | surround | none |
 
-Caps are in Mbps. With CQ encoding most files land well under the cap; the cap only stops action scenes from ballooning.
+Caps are in Mbps for normal frame rates; 50/60 fps video (sports, game footage) automatically gets 1.5× the cap. With CQ encoding most files land well under the cap; the cap only stops action scenes from ballooning. **10-bit** (on for Dark & Moody) prevents banding in dark scenes and smooth gradients; every modern device plays it. **Grain cleanup** (light on Classic Film) smooths film grain before encoding, which saves a lot of space on grainy films at the cost of some texture; use **preview** first. Both can be switched on for any preset in the Presets tab.
