@@ -7,10 +7,6 @@ reclaimer_run.log
 reclaimer_genres.json
 reclaimer_arr.json
 reclaimer_transcodes.json
-shrinkray*.json
-reclaim_*
-reclaim.json
-shrinkray_log.csv
 _to_delete/
 *.tmp
 previews/
@@ -19,6 +15,7 @@ previews/
 build/
 dist/
 *.spec
+reclaimer.ico
 
 # ffmpeg binaries copied next to the app (GPL; download them, don't commit them)
 ffmpeg.exe

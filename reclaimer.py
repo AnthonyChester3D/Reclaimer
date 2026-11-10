@@ -7,7 +7,7 @@
 Needs ffmpeg + ffprobe on PATH. Settings live in reclaimer.json next to this file.
 """
 import argparse, base64, csv, html, json, os, re, shutil, statistics, subprocess, sys, tempfile, threading, time, webbrowser
-from urllib.parse import unquote, urlencode
+from urllib.parse import quote, unquote, urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 from concurrent.futures import ThreadPoolExecutor
@@ -120,9 +120,32 @@ DEFAULT_CONFIG = {
     "audio_keep_default": True,   # keep the track flagged default (usually the original language)
 }
 IGNORE_MARKERS = (".reclaimerignore",)   # drop this file in a folder to hide it and everything below
-PREVIEW = {"running": False, "msg": "", "url": ""}
+PREVIEW = {"running": False, "msg": "", "result": None, "step": "", "progress": 0.0}
 TRAY = {}
 MEDIA = {"running": False, "msg": ""}
+PRESET_DESCRIPTIONS = {
+    "Live Action TV": "Everyday TV dramas and shows. Full HD, small files, stereo sound.",
+    "Anime": "Japanese animation. Flat colours shrink well, and styled subtitles are burned into the picture so every TV and phone can show them.",
+    "Cartoons HD": "Western cartoons in HD. Flat colours and clean lines shrink a lot without looking any different.",
+    "Cartoons SD": "Older cartoons in DVD quality. Kept at their original size, just in smaller files.",
+    "Movies HD": "Most movies. Full HD with surround sound kept.",
+    "Movies SD": "DVD-quality movies. Kept at DVD size, with surround sound kept.",
+    "Movies 4K": "Movies you want to keep in 4K and HDR. Trims oversized files without dropping them to 1080p.",
+    "Cinematic TV": "Big-budget shows with effects and dark scenes. A little more room than everyday TV.",
+    "Sitcom": "Comedies and kids' shows. Simple sets and bright lighting shrink very well.",
+    "True Crime": "True crime and interview-heavy documentaries. 720p and very small files: fine for background viewing.",
+    "CG Animation": "Pixar-style 3D animation. Smooth gradients need a little more room than flat cartoons.",
+    "Talk & Reality": "Reality TV, game shows, talk shows, news and stand-up. 720p and very small files.",
+    "Documentary": "Nature and history documentaries. Extra room so scenery stays sharp.",
+    "Concerts": "Concert films. Picture like Movies HD, with surround or Atmos sound kept.",
+    "Sports": "Live sports. Constant fast motion, so it gets the most room of any 1080p preset.",
+    "Classic Film": "Older films with visible film grain. Gently smooths the grain, which saves a lot of space.",
+    "Dark & Moody": "Horror and other dark films. 10-bit colour keeps shadows smooth instead of blotchy.",
+    "Lectures": "Courses, talks and tutorials. Slides and talking heads need very little.",
+    "TV 4K": "Shows you want to keep in 4K and HDR.",
+}
+for _n, _p in DEFAULT_PRESETS.items():
+    _p["desc"] = PRESET_DESCRIPTIONS.get(_n, "")
 LOCK = threading.Lock()
 CFG, CACHE, STATE, GENRES = {}, {}, {}, {}
 ARR_MAP, TRANSCODES = {}, {}   # show/movie folder -> Sonarr/Radarr info; "file|device" -> Plex transcode record
@@ -134,6 +157,7 @@ SCAN = {"running": False, "done": 0, "total": 0, "scope": "", "error": ""}
 QUEUE = {"items": [], "running": False, "stop": False, "current": None, "saved": 0, "waiting": "", "force": False}
 FILTERS = set()
 _PROC = {"p": None, "cancel": False}
+_PREV = {"p": None}                              # the preview's own ffmpeg, so it and the queue never stop each other
 
 
 # ---------- small helpers ----------
@@ -443,6 +467,91 @@ def language_summary():
                 out[l]["only"] += 1
     return sorted(out.values(), key=lambda e: -e["files"])
 
+def language_items(lang):
+    """Every show/movie with an audio track in this language, with what to double-check."""
+    out = {}
+    for info in all_infos():
+        lib = library_of(info["path"])
+        tracks = [a for a in info["audio"] if a["lang"] == lang]
+        if not lib or not tracks:
+            continue
+        key = item_key(info["path"], lib)
+        it = out.setdefault(key, {"title": Path(key).name, "path": key, "type": lib["type"], "files": [], "bytes": 0, "only": 0,
+                                  "flags": 0, "genres": sorted(item_genres(key))[:4]})
+        others = sorted({a["lang"] for a in info["audio"]} - {lang})
+        tr = []
+        for a in tracks:
+            said = {c for rx, c in TITLE_LANGS if rx.search(a["title"] or "")} - {lang}
+            tr.append({"idx": a["idx"], "title": a["title"], "codec": a["codec"], "ch": a["ch"], "guessed": bool(a.get("lang_guessed")),
+                       "says": LANG_NAMES.get(next(iter(said)), next(iter(said))) if len(said) == 1 else "",
+                       "says_code": next(iter(said)) if len(said) == 1 else ""})
+            it["bytes"] += a["bps"] * info["duration"] / 8
+        flag = any(t["says"] for t in tr)
+        it["flags"] += flag
+        it["only"] += not others
+        it["files"].append({"name": Path(info["path"]).name, "path": info["path"], "others": [LANG_NAMES.get(o, o) for o in others],
+                            "tracks": tr, "flag": flag, "says": next((t["says"] for t in tr if t["says"]), "")})
+    for it in out.values():
+        it["files"].sort(key=lambda f: f["name"].lower())
+    return sorted(out.values(), key=lambda i: (-i["flags"], -i["bytes"]))
+
+def audio_stream(path, idx):
+    c = CACHE.get(path) or {}
+    info = c.get("info")
+    if not info or not library_of(path):
+        raise ValueError("that file isn't in a scanned library")
+    for n, a in enumerate(info["audio"]):
+        if a["idx"] == idx:
+            return info, n
+    raise ValueError("that audio track wasn't found; rescan and try again")
+
+def track_sample(path, idx):
+    """10 seconds of one audio track, from about a third of the way in, so you can hear what language it is."""
+    info, _ = audio_stream(path, idx)
+    PREVIEW_DIR.mkdir(exist_ok=True)
+    for old in PREVIEW_DIR.glob("sample-*.m4a"):
+        old.unlink(missing_ok=True)
+    out = PREVIEW_DIR / f"sample-{int(time.time() * 1000)}.m4a"
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{info['duration'] / 3:.1f}", "-i", path, "-map", f"0:{idx}", "-t", "10",
+                        "-vn", "-ac", "2", "-c:a", "aac", "-b:a", "128k", str(out)], capture_output=True, text=True)
+    if r.returncode or not out.exists():
+        raise ValueError("couldn't read that track: " + (r.stderr.strip().splitlines() or ["ffmpeg failed"])[-1])
+    return {"url": "/previews/" + out.name}
+
+def relabel_track(path, idx, lang):
+    """Fix a wrong language tag. Copies every stream as-is into a new file, checks it, then swaps it in."""
+    lang = (lang or "").strip().lower()
+    if not re.fullmatch(r"[a-z]{3}", lang):
+        raise ValueError("use a 3-letter language code, like eng or hin")
+    if QUEUE["current"] == path:
+        raise ValueError("that file is being encoded right now")
+    info, n = audio_stream(path, idx)
+    src = Path(path)
+    tmp = src.with_name(f".reclaimer_relabel{src.suffix}")
+    before = ffprobe(path) or {}
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", path, "-map", "0", "-c", "copy", "-map_metadata", "0", "-map_chapters", "0",
+                        f"-metadata:s:a:{n}", f"language={lang}", str(tmp)], capture_output=True, text=True)
+    try:
+        after = ffprobe(tmp) if not r.returncode else None
+        ok = after and len(after.get("streams", [])) == len(before.get("streams", [])) \
+            and abs(num(after.get("format", {}).get("duration")) - num(before.get("format", {}).get("duration"))) < 1.5 \
+            and lang_code(([s for s in after["streams"] if s.get("codec_type") == "audio"][n].get("tags") or {}).get("language")) == lang_code(lang)
+        if not ok:
+            raise ValueError("the relabelled copy didn't check out, so the original was left alone" +
+                             (": " + r.stderr.strip().splitlines()[-1] if r.returncode and r.stderr.strip() else ""))
+        st = src.stat()
+        os.replace(tmp, src)
+        os.utime(src, (st.st_atime, st.st_mtime))
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    nst, info = src.stat(), summarize(path, ffprobe(path))
+    with LOCK:
+        CACHE[path] = {"size": nst.st_size, "mtime": nst.st_mtime, "info": info}
+        save_cache()
+    print(f"Relabelled audio track {n + 1} of {src.name} as {LANG_NAMES.get(lang, lang)}")
+    return {"ok": True, "name": LANG_NAMES.get(lang, lang)}
+
 def plan_audio(info, mode):
     """Return (list of (idx, action, kbps_estimate), est_bps_total). action: copy|aac|eac3|drop."""
     def decide(a):
@@ -490,13 +599,22 @@ def burn_candidate(info, mode):
     full.sort(key=lambda s: s["codec"] not in ASS_SUBS)
     return (full[0]["idx"], "ass" if full[0]["codec"] in ASS_SUBS else "image") if full else None
 
+_MARKERS = {}                                   # folder -> (checked at, has marker); saves thousands of NAS lookups per page load
+
+def has_marker(d):
+    k, now = str(d), time.time()
+    hit = _MARKERS.get(k)
+    if not hit or now - hit[0] > 120:
+        hit = _MARKERS[k] = (now, any((d / m).exists() for m in IGNORE_MARKERS))
+    return hit[1]
+
 def is_protected(path):
     if any(inside(path, k) for k in CFG["protected"]):
         return True
     d = Path(path).parent                       # marker file anywhere above the file, up to its library root
     lib = library_of(path)
     while lib and inside(str(d), lib["path"]):
-        if any((d / m).exists() for m in IGNORE_MARKERS):
+        if has_marker(d):
             return True
         if norm(str(d)) == norm(lib["path"]):
             break
@@ -1025,7 +1143,18 @@ def prepare_ass(info, plan, clip=None):
     shutil.rmtree(work, ignore_errors=True)
     return None
 
+def display_codec():
+    """Near-lossless H.264 for the comparison clips: every browser plays it, and it hides nothing."""
+    if CFG["encoder"] == "hevc_nvenc":
+        return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "14", "-b:v", "0", "-pix_fmt", "yuv420p"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
+
+class PreviewCancelled(Exception):
+    pass
+
 def make_preview(path):
+    """A 20 s clip encoded exactly like the real thing, plus browser-playable copies of the original and the result
+    for the before/after slider."""
     try:
         info, planp = plan_for_path(path)
         if not info:
@@ -1035,30 +1164,76 @@ def make_preview(path):
             plan["action"] = "encode"
         clip = (max(0.0, info["duration"] / 2 - 10), min(20.0, info["duration"] or 20.0))
         PREVIEW_DIR.mkdir(exist_ok=True)
-        out = PREVIEW_DIR / ("".join(c for c in Path(path).stem if c.isalnum() or c in " -_.") + ".mp4")
+        for old in PREVIEW_DIR.glob("*"):                    # only the latest preview is kept
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        stem = "".join(c for c in Path(path).stem if c.isalnum() or c in " -_.")[:80]
+        real, after, before = (PREVIEW_DIR / f"{stem}{sfx}.mp4" for sfx in (" (real HEVC)", ".after", ".before"))
+        PREVIEW.update(step="encoding the sample like the real thing")
         work = prepare_ass(info, plan, clip) if plan.get("burn_kind") == "ass" else None
         try:
-            rc, err = run_ffmpeg(build_cmd(info, plan, p, out, clip=clip, preview=True), clip[1], PREVIEW, work)
-            if rc != 0 and CFG["hwaccel_decode"] not in ("", "none"):
-                rc, err = run_ffmpeg(build_cmd(info, plan, p, out, hwaccel=False, clip=clip, preview=True), clip[1], PREVIEW, work)
+            rc, err = run_ffmpeg(build_cmd(info, plan, p, real, clip=clip, preview=True), clip[1], PREVIEW, work)
+            if rc != 0 and not PREVIEW.get("cancel") and CFG["hwaccel_decode"] not in ("", "none"):
+                rc, err = run_ffmpeg(build_cmd(info, plan, p, real, hwaccel=False, clip=clip, preview=True), clip[1], PREVIEW, work)
         finally:
             if work:
                 shutil.rmtree(work, ignore_errors=True)
+        if PREVIEW.get("cancel"):
+            raise PreviewCancelled()
         if rc != 0:
             raise ValueError(err or f"ffmpeg exit {rc}")
-        PREVIEW.update(url="/previews/" + out.name, msg=f"preview ready ({out.stat().st_size / 1e6:.0f} MB for {clip[1]:.0f}s)")
-        try:
-            os.startfile(out) if os.name == "nt" else subprocess.Popen(["xdg-open", str(out)], stderr=subprocess.DEVNULL)
-        except Exception:
-            pass
+        out = summarize(real, ffprobe(real))
+        PREVIEW.update(step="preparing the side-by-side", progress=0.0)
+        base = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
+        rc, err = run_ffmpeg(base + ["-i", str(real), "-map", "0:v:0", "-map", "0:a:0?"] + display_codec() +
+                             ["-c:a", "copy", "-movflags", "+faststart", str(after)], clip[1], PREVIEW)
+        if PREVIEW.get("cancel"):
+            raise PreviewCancelled()
+        if rc != 0:
+            raise ValueError(err or "could not prepare the comparison clip")
+        ref = []                                             # the original, framed exactly like the result
+        if info["field_order"] in ("tt", "bb", "tb", "bt"):
+            ref.append("bwdif=mode=send_frame:parity=auto:deint=interlaced")
+        if plan["hdr_to_sdr"]:
+            ref.append(tonemap_filter())
+        ref.append(f"scale={out['width']}:{out['height']}:flags=lanczos")
+        rc, err = run_ffmpeg(base + ["-ss", f"{clip[0]:.3f}", "-i", info["path"], "-t", f"{clip[1]:.3f}", "-map", f"0:{info['vidx']}",
+                                     "-an", "-vf", ",".join(ref)] + display_codec() + ["-movflags", "+faststart", str(before)], clip[1], PREVIEW)
+        if PREVIEW.get("cancel"):
+            raise PreviewCancelled()
+        if rc != 0:
+            raise ValueError(err or "could not prepare the original clip")
+        PREVIEW.update(step="measuring the difference")
+        scores = None                                        # compare the sample with the original's same 20 s
+        rc, err = run_quiet(["ffmpeg", "-hide_banner", "-nostats", "-i", str(real), "-i", str(before), "-filter_complex",
+                             "[0:v]format=yuv420p[a];[1:v]format=yuv420p[b];[a][b]ssim", "-f", "null", "-"], slot=_PREV)
+        if PREVIEW.get("cancel"):
+            raise PreviewCancelled()
+        m = re.search(r"SSIM Y:([\d.]+)", err)
+        if m:
+            scores = [float(m.group(1))]
+        real_mbps = out["vbps"] / 1e6 if out else 0
+        PREVIEW.update(
+            result={"title": Path(path).name, "before": "/previews/" + quote(before.name), "after": "/previews/" + quote(after.name),
+                    "real": "/previews/" + quote(real.name), "seconds": round(clip[1]),
+                    "src": f"{info['width']}x{info['height']} {info['codec']} {info['vbps'] / 1e6:.1f} Mbps",
+                    "dst": f"{out['width']}x{out['height']} hevc {real_mbps:.1f} Mbps" if out else "",
+                    "saving": round(100 * (1 - real_mbps / max(0.01, info["vbps"] / 1e6))) if out else None,
+                    "match": round(sum(scores) / len(scores), 3) if scores else None, "preset": plan["preset"]},
+            msg="preview ready")
+    except PreviewCancelled:
+        PREVIEW.update(msg="cancelled", result=None)
     except Exception as e:
         PREVIEW["msg"] = f"preview failed: {e}"
     finally:
-        PREVIEW["running"] = False
+        PREVIEW.update(running=False, step="")
 
 def run_ffmpeg(cmd, duration, item, cwd=None):
+    slot = _PREV if item is PREVIEW else _PROC
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as errf:
-        _PROC["p"] = p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8", errors="replace", cwd=cwd)
+        slot["p"] = p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errf, text=True, encoding="utf-8", errors="replace", cwd=cwd)
         for line in p.stdout:
             k, _, v = line.strip().partition("=")
             if k == "out_time_us" and duration and v.isdigit():
@@ -1066,18 +1241,19 @@ def run_ffmpeg(cmd, duration, item, cwd=None):
             elif k == "speed":
                 item["speed"] = v
         p.wait()
-        _PROC["p"] = None
+        slot["p"] = None
         errf.seek(0)
         err = errf.read().strip()
     return p.returncode, err.splitlines()[-1][:200] if err else ""
 
 # ---------- verification ----------
-def run_quiet(cmd, cwd=None):
-    """Run ffmpeg, cancellable from the queue; returns (returncode, stderr text)."""
+def run_quiet(cmd, cwd=None, slot=None):
+    """Run ffmpeg, cancellable from the queue (or the preview window); returns (returncode, stderr text)."""
+    slot = slot or _PROC
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as errf:
-        _PROC["p"] = p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf, cwd=cwd)
+        slot["p"] = p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=errf, cwd=cwd)
         p.wait()
-        _PROC["p"] = None
+        slot["p"] = None
         errf.seek(0)
         return p.returncode, errf.read()
 
@@ -1433,6 +1609,37 @@ class Handler(BaseHTTPRequestHandler):
         except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
             pass                                     # the browser closed the connection; nothing to tell it
 
+    def send_file(self, f, ctype):
+        """Serve a file with byte-range support, so the browser can seek and loop the preview videos."""
+        size = f.stat().st_size
+        start, end = 0, size - 1
+        m = re.match(r"bytes=(\d*)-(\d*)", self.headers.get("Range", ""))
+        if m and (m.group(1) or m.group(2)):
+            if m.group(1):
+                start, end = int(m.group(1)), int(m.group(2)) if m.group(2) else size - 1
+            else:
+                start = size - int(m.group(2))
+            end = min(end, size - 1)
+        try:
+            self.send_response(206 if m and (m.group(1) or m.group(2)) else 200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(end - start + 1))
+            if self.headers.get("Range"):
+                self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+            self.end_headers()
+            with open(f, "rb") as fh:
+                fh.seek(start)
+                left = end - start + 1
+                while left > 0:
+                    chunk = fh.read(min(262144, left))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    left -= len(chunk)
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
     def _send(self, obj, code, ctype):
         body = obj if isinstance(obj, bytes) else json.dumps(obj).encode()
         self.send_response(code)
@@ -1449,10 +1656,13 @@ class Handler(BaseHTTPRequestHandler):
                 page = SETUP_HTML.replace("__MISSING__", " and ".join(MISSING)).replace("__HERE__", str(HERE))
                 return self.send(page.encode(), ctype="text/html; charset=utf-8")
             return self.send((ASSETS / "index.html").read_bytes(), ctype="text/html; charset=utf-8")
+        if path == "/favicon.svg":
+            st = q.get("s") if q.get("s") in ICON_COLORS else icon_state()
+            return self.send(icon_svg(st).encode(), ctype="image/svg+xml")
         if path.startswith("/previews/"):
             f = PREVIEW_DIR / unquote(path[10:]).replace("/", "").replace("\\", "")
             if f.is_file():
-                return self.send(f.read_bytes(), ctype="video/mp4")
+                return self.send_file(f, "audio/mp4" if f.suffix == ".m4a" else "video/mp4")
         if path == "/api/ping":
             return self.send({"app": "reclaimer", "version": VERSION})
         if path == "/api/state":
@@ -1460,7 +1670,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({"config": CFG, "scan": SCAN, "queue": QUEUE, "media": MEDIA, "preview": PREVIEW, "cached": len(CACHE),
                                   "arr": ARR, "verify": VERIFY, "junk": {"running": JUNK["running"], "msg": JUNK["msg"], "items": JUNK["items"],
                                                        "cats": {k: {"label": v[0], "default": v[1]} for k, v in JUNK_CATS.items()}},
-                                  "encoders": ["hevc_nvenc", "libx265"]})
+                                  "encoders": ["hevc_nvenc", "libx265"], "defaultPresets": list(DEFAULT_PRESETS)})
         if path == "/api/recommend":
             with LOCK:
                 return self.send(recommendations(unquote(q.get("scope", ""))))
@@ -1473,6 +1683,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({"error": "busy encoding"})
             self.send({"ok": True})
             return shutdown_app()
+        if self.path in ("/api/track_sample", "/api/relabel_track"):   # can take a while on a NAS; don't freeze the page
+            try:
+                return self.send(track_sample(body.get("path"), int(body.get("idx"))) if self.path == "/api/track_sample"
+                                 else relabel_track(body.get("path"), int(body.get("idx")), body.get("lang")))
+            except Exception as e:
+                return self.send({"error": str(e)}, 400)
         with LOCK:
             try:
                 self.send(self.api_post(self.path, body))
@@ -1494,6 +1710,8 @@ class Handler(BaseHTTPRequestHandler):
             return {"ok": True}
         if path == "/api/languages":
             return language_summary()
+        if path == "/api/language_items":
+            return language_items(lang_code(b.get("lang")))
         if path == "/api/recheck":
             if check_tools():
                 init_engine()
@@ -1533,10 +1751,16 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/queue/start":
             start_queue(bool(b.get("force")))
             return {"ok": True}
+        if path == "/api/preview/cancel":
+            if PREVIEW["running"]:
+                PREVIEW["cancel"] = True
+                if _PREV["p"]:
+                    _PREV["p"].kill()
+            return {"ok": True}
         if path == "/api/preview":
             if PREVIEW["running"]:
                 return {"error": "a preview is already being made"}
-            PREVIEW.update(running=True, msg="making preview…", url="", progress=0.0)
+            PREVIEW.update(running=True, cancel=False, msg="making preview…", result=None, progress=0.0, step="starting")
             threading.Thread(target=make_preview, args=(b["path"],), daemon=True).start()
             return {"ok": True}
         if path == "/api/arr/sync":
@@ -2219,14 +2443,39 @@ def status_text():
 def gb_text(b):
     return f"{b / 1e12:.2f} TB" if b >= 1e12 else f"{b / 1e9:.1f} GB" if b >= 1e9 else f"{b / 1e6:.0f} MB"
 
-def tray_image(busy=False):
+ICON_COLORS = {"idle": "#5aa9ff", "working": "#4fc38a", "paused": "#e3a84f"}
+ICON_INK = "#0b1a2e"
+
+def icon_state():
+    """idle (blue), working (green: encoding) or paused (amber: waiting for the window or a viewer)."""
+    if QUEUE.get("current"):
+        return "working"
+    return "paused" if QUEUE.get("waiting") else "idle"
+
+def icon_svg(state="idle"):
+    """The Reclaimer icon: a disk with a slice freed up and a plus where it was. Drawn on a 64x64 grid."""
+    c = ICON_COLORS.get(state, ICON_COLORS["idle"])
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect x="2" y="2" width="60" height="60" rx="14" fill="{c}"/>'
+            f'<path d="M26 38 L26 19 A19 19 0 1 0 45 38 Z" fill="{ICON_INK}"/>'
+            f'<rect x="33" y="17.5" width="20" height="7" rx="2.3" fill="{ICON_INK}"/>'
+            f'<rect x="39.5" y="11" width="7" height="20" rx="2.3" fill="{ICON_INK}"/></svg>')
+
+def tray_image(state="idle", size=64):
+    """Same icon as a PIL image (drawn 4x larger, then scaled down for smooth edges)."""
     from PIL import Image, ImageDraw
-    img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
+    k = 4 * size / 64
+    sc = lambda *v: tuple(x * k for x in v)
+    img = Image.new("RGBA", (size * 4, size * 4), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle((2, 2, 62, 62), radius=14, fill=(90, 169, 255) if not busy else (79, 195, 138))
-    d.ellipse((14, 12, 42, 40), outline=(8, 21, 39), width=6)            # magnifier: finding what's lost
-    d.line((37, 36, 50, 50), fill=(8, 21, 39), width=8)
-    return img
+    d.rounded_rectangle(sc(2, 2, 62, 62), radius=14 * k, fill=ICON_COLORS.get(state, ICON_COLORS["idle"]))
+    d.pieslice(sc(26 - 19, 38 - 19, 26 + 19, 38 + 19), 0, 270, fill=ICON_INK)     # three quarters; top-right is freed
+    d.rounded_rectangle(sc(33, 17.5, 53, 24.5), radius=2.3 * k, fill=ICON_INK)    # the plus where the slice was
+    d.rounded_rectangle(sc(39.5, 11, 46.5, 31), radius=2.3 * k, fill=ICON_INK)
+    return img.resize((size, size), Image.LANCZOS)
+
+def write_ico(path):
+    """Icon file for the .exe build."""
+    tray_image("idle", 256).save(path, sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
 
 def toggle_notify():
     with LOCK:
@@ -2278,13 +2527,13 @@ def run_tray(url, srv):
 
     def watch(icon):
         icon.visible = True
-        was_running, busy = False, False
+        was_running, shown = False, "idle"
         while True:
             time.sleep(3)
             icon.title = ("Reclaimer - " + status_text())[:127]
-            now_busy = bool(QUEUE["current"])
-            if now_busy != busy:
-                icon.icon, busy = tray_image(now_busy), now_busy
+            state = icon_state()
+            if state != shown:
+                icon.icon, shown = tray_image(state), state
             if was_running and not QUEUE["running"] and CFG["notify"]:
                 done = sum(1 for i in QUEUE["items"] if i["status"] == "done")
                 failed = sum(1 for i in QUEUE["items"] if i["status"] in ("failed", "rejected"))
@@ -2307,6 +2556,9 @@ def main():
         sys.stdout = sys.stderr = open(HERE / "reclaimer_run.log", "a", encoding="utf-8", buffering=1)
     CFG = json.loads(json.dumps(DEFAULT_CONFIG))
     CFG.update(load_json(CONFIG_PATH, {}))
+    for name, p in CFG["presets"].items():          # presets saved before descriptions existed
+        if not p.get("desc") and name in PRESET_DESCRIPTIONS:
+            p["desc"] = PRESET_DESCRIPTIONS[name]
     for name, p in DEFAULT_PRESETS.items():
         CFG["presets"].setdefault(name, p)
     save_json(CONFIG_PATH, CFG)

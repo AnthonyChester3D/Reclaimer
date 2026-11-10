@@ -28,7 +28,7 @@ Messages that used to go to the console are written to `reclaimer_run.log`. To r
 1. The first page asks for your first library folder, e.g. `\\mynas\video\Movies` (movies, Movies HD). Add the rest in **Settings** — one row per folder, e.g. `\\mynas\video\TV` (tv, Live Action TV) and the Radarr/Sonarr folders.
 2. **Recommendations** tab: pick a scope (all, or one library) and hit **Scan**. Big libraries take a while the first time; later scans only probe files that changed.
 3. Each row is a show or movie. Click it to see the files. Change the preset dropdown on anime/cartoon shows (select several rows and use "Set preset for selected" to do it in bulk).
-4. Not sure about a preset? Click **preview** next to any file: a 20-second clip from the middle is encoded with the current settings and opened in your video player (also linked from the page).
+4. Not sure about a preset? Click **preview** next to any file: a 20-second clip from the middle is encoded exactly like the real thing and shown right on the page with a **before/after slider**: drag across the video to compare the original (left) with Reclaimer's version (right). It also shows the size saving and a picture-match score, and you can download the real encoded clip.
 5. Tick what you want, **Queue selected**, then **Start** on the Queue tab. Try a handful of files first and check them in Plex.
 6. Happy with a show? Leave it. Not happy? **restore** on its row puts the originals back. Once you trust the results, **Delete all** in the originals card frees the space.
 
@@ -81,7 +81,7 @@ Only Plex has been tried against a real server; Jellyfin, Emby and Kodi follow t
 
 ## Audio languages
 
-Settings → Audio languages lists every audio language in your scanned libraries, with how many files have it and how much space it takes. Turn on **remove audio in languages I don't keep** and tick the ones to keep. A track is always kept if:
+Settings → Audio languages lists every audio language in your scanned libraries, with how many files have it and how much space it takes. **What's this?** on any language lists the shows and movies that have it, biggest first, and each one opens to its files and tracks. Tracks whose own title names a different language (a track tagged Hindi but titled "English 5.1") are flagged as possibly mislabelled and listed first; **only track** marks files where it's the only audio. Every track has **▶ Listen** (plays 10 seconds from a third of the way in) and **Change to…** to fix a wrong label; flagged tracks also get a one-click **Set to English** (or whatever their title says). Relabelling copies the file with the new tag (nothing is re-encoded), checks the copy has the same streams and length, then swaps it in, keeping the original's date. Turn on **remove audio in languages I don't keep** and tick the ones to keep. A track is always kept if:
 
 - it's the file's only audio track, or none of the file's tracks are in a language you keep (nothing is ever left silent);
 - it's flagged as the default track, usually the original language (can be switched off);
@@ -166,3 +166,5 @@ A good encode typically scores 0.93-0.99, and the score is shown in the queue an
 | TV 4K (HDR kept) | 2160p, 12 Mbps at 4K | 6 | 3.5 | 1.5 | 25 | surround | none |
 
 Caps are in Mbps for normal frame rates; 50/60 fps video (sports, game footage) automatically gets 1.5× the cap. With CQ encoding most files land well under the cap; the cap only stops action scenes from ballooning. **10-bit** (on for Dark & Moody) prevents banding in dark scenes and smooth gradients; every modern device plays it. **Grain cleanup** (light on Classic Film) smooths film grain before encoding, which saves a lot of space on grainy films at the cost of some texture; use **preview** first. Both can be switched on for any preset in the Presets tab.
+
+The Presets tab shows each preset as a card with a plain-English description and summary tags. **Edit** opens its settings grouped into Picture, Sound and Subtitles; the CQ number is a *Smaller files ↔ Better picture* slider, and the caps live under *Size limits (advanced)*. Custom presets can be added based on an existing one and deleted; the built-in ones can be edited but not deleted.

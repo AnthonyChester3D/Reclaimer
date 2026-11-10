@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>Reclaimer</title>
+<html lang="en"><head><meta charset="utf-8"><title>Reclaimer</title><link rel="icon" id="favicon" type="image/svg+xml" href="/favicon.svg">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
 :root{--bg:#15171c;--panel:#1e2128;--line:#2c3039;--text:#d8dbe2;--dim:#8a8f9c;--acc:#5aa9ff;--good:#4fc38a;--warn:#e3a84f;--bad:#e06c6c}
@@ -35,6 +35,25 @@ tr.files td{padding:0 0 10px 34px;background:#191c22}tr.files table td{font-size
 .bar1{height:10px;background:var(--acc);border-radius:0 4px 4px 0;min-width:2px}
 details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 .row{display:grid;grid-template-columns:1fr 110px 170px 40px;gap:8px;margin-bottom:6px;align-items:center}
+.pv{position:fixed;inset:0;background:rgba(5,8,12,.82);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+.pv.on{display:flex}.pvbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;width:min(1200px,96vw);max-height:94vh;overflow:auto}
+.pvhead{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}.pvhead b{font-size:15px}
+.cmp{position:relative;background:#000;border-radius:6px;overflow:hidden;user-select:none;touch-action:none;cursor:ew-resize}
+.cmp video{display:block;width:100%;max-height:70vh;object-fit:contain}.cmp #vB{position:absolute;inset:0;height:100%}
+.hdl{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+.hdl:after{content:'⇔';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;color:#111;border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.cl{position:absolute;top:10px;padding:3px 8px;border-radius:4px;background:rgba(0,0,0,.6);color:#fff;font-size:12px;pointer-events:none}
+.pvwait{padding:40px;text-align:center;color:var(--dim)}.pvwait .prog{max-width:420px;margin:12px auto}
+.intro{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.how{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}.how div{background:#191c22;border-radius:8px;padding:10px 12px}
+.how b{display:block;margin-bottom:3px}.how span b{display:inline;color:var(--fg,inherit)}.ptop .grow{flex:1}.how span{color:var(--dim);font-size:13px}
+.pcard{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 14px;margin-bottom:8px}
+.ptop{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.ptop b{font-size:15px;margin-right:6px}
+.pdesc{color:var(--dim);font-size:13px;margin-top:4px}.pedit{border-top:1px solid var(--line);margin-top:10px;padding-top:6px}
+.pedit h4{margin:12px 0 4px;font-size:13px;color:var(--acc);font-weight:600}
+.pf{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}.pf>label{min-width:170px}
+.pf .hint,.hint{flex-basis:100%;color:var(--dim);font-size:12px;margin-left:178px;margin-top:-2px}.pf label .hint{margin-left:0}
+.pf input[type=text].pd{flex:1;min-width:240px}
 #toast.bad{border-color:var(--bad);background:#3a1d1d;color:#ffd7d7;font-weight:600}
 #toast{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:6px;display:none}
 </style></head><body>
@@ -89,9 +108,18 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <div id="hArr" class="help"></div>
 </section>
 <section id="presets">
- <p class="help">Caps are the HEVC video bitrate ceiling in Mbps per output resolution. CQ is the NVENC quality knob (lower = better and bigger; 22–28 is the useful range). Audio: <b>stereo</b> = AAC 2.0 160k, <b>surround</b> = keep up to 5.1, lossless/DTS becomes E-AC3 448k, <b>keep</b> = untouched. Caps are for normal frame rates; 50/60 fps video automatically gets 1.5× the cap. <b>10-bit</b> prevents banding in dark scenes and smooth gradients (every modern device plays it). <b>Grain cleanup</b> smooths film grain before encoding, which saves a lot of space on older or grainy films at the cost of some texture; preview it first. <b>Burn subs</b>: styled ASS/SSA subtitles (and optionally PGS/VobSub image subs) in your language (Settings) are burned into the picture when the file has no audio in that language and no plain SRT subs in it; forced and signs/songs tracks are ignored. Roku and Xbox can't show these formats without Plex transcoding; plain SRT plays everywhere and is never burned.</p>
- <table><thead><tr><th>Preset</th><th>Max res</th><th>2160 cap</th><th>1080 cap</th><th>720 cap</th><th>480 cap</th><th>CQ</th><th>Audio</th><th>HDR→SDR</th><th title="10-bit colour avoids banding in dark scenes and gradients">10-bit</th><th title="clean up film grain before encoding; grain costs a lot of bitrate">Grain cleanup</th><th>Burn subs</th><th></th></tr></thead><tbody id="pBody"></tbody></table>
- <div class="bar" style="margin-top:10px"><input type="text" id="newPreset" placeholder="new preset name" style="width:220px"><button id="addPreset">Add preset</button><span class="grow"></span><button id="savePresets" class="pri">Save presets</button></div>
+ <div class="intro">
+  <h3 style="margin:0 0 4px">Presets: how Reclaimer treats each kind of video</h3>
+  <p class="dim" style="margin:0 0 12px">A preset is a recipe for one kind of video. A cartoon can shrink a lot and look the same; live sports can't. So each kind gets its own recipe.</p>
+  <div class="how">
+   <div><b>1 · Picked for you</b><span>Each show or movie gets a preset from its genres (Settings → Genre rules), or its library's default. Change any single show from the dropdown on the Recommendations tab.</span></div>
+   <div><b>2 · Tuned for the content</b><span>A preset decides the largest picture size, how hard to squeeze, and what to do with the sound and subtitles.</span></div>
+   <div><b>3 · Safe to change</b><span>Changes only affect future encodes. Try one on a single file with <b>preview</b> before queuing a whole show.</span></div>
+  </div>
+ </div>
+ <div class="bar" style="margin:14px 0 10px"><input type="text" id="newPreset" placeholder="name for a new preset" style="width:200px"> based on <select id="newFrom"></select><button id="addPreset">Add preset</button>
+  <span class="grow"></span><span id="pDirty" class="warn"></span><button id="savePresets" class="pri">Save changes</button></div>
+ <div id="pList"></div>
 </section>
 <section id="settings">
  <h3>Libraries</h3>
@@ -109,7 +137,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <div class="bar"><label><input type="checkbox" id="langOn"> <b>remove audio in languages I don't keep</b></label>
   <label class="dim"><input type="checkbox" id="langDefault"> always keep the default track (usually the original language)</label>
   <label class="dim"><input type="checkbox" id="langUnknown"> keep untagged tracks</label></div>
- <table style="max-width:640px"><thead><tr><th>Keep</th><th>Language</th><th class="num">Files</th><th class="num">Audio size</th><th class="num">Only language in</th></tr></thead><tbody id="langBody"><tr><td colspan="5" class="dim">scan your libraries to see which languages you have</td></tr></tbody></table>
+ <table style="max-width:640px"><thead><tr><th>Keep</th><th>Language</th><th class="num">Files</th><th class="num">Audio size</th><th class="num">Only language in</th><th></th></tr></thead><tbody id="langBody"><tr><td colspan="6" class="dim">scan your libraries to see which languages you have</td></tr></tbody></table>
  <h3>Sonarr / Radarr</h3>
  <p class="help">Optional but recommended. If Reclaimer shrinks an episode below the quality Sonarr is set to want (its "cutoff"), Sonarr may download the bigger copy again. With these filled in, Reclaimer never goes below a cutoff, prefers keeping the copy they manage when removing duplicates, and asks them to rescan what it changed. API key: in Sonarr/Radarr, Settings → General → Security → API Key.</p>
  <div class="bar">Sonarr <input type="text" id="sonUrl" placeholder="http://mynas:8989" style="width:200px"> key <input type="text" id="sonKey" style="width:260px"></div>
@@ -141,6 +169,15 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 </section>
 </main>
 <div id="toast"></div>
+<div class="pv" id="pv"><div class="pvbox">
+ <div class="pvhead"><b id="pvTitle">Preview</b><span id="pvSub" class="dim"></span><span class="grow"></span><button id="pvClose">✕ Close</button></div>
+ <div id="pvWait" class="pvwait"><div id="pvStep">Making a 20 second preview…</div><div class="prog"><i id="pvProg" style="width:0%"></i></div></div>
+ <div id="pvView" style="display:none">
+  <div class="cmp" id="cmp"><video id="vA" muted playsinline loop preload="auto"></video><video id="vB" playsinline loop preload="auto"></video>
+   <div class="hdl" id="hdl"></div><span class="cl" style="left:10px">Original</span><span class="cl" style="right:10px">Reclaimer</span></div>
+  <div class="bar" style="margin-top:8px"><button id="pvPlay">⏸ Pause</button><span class="dim">Drag across the video to compare.</span><span class="grow"></span>
+   <span id="pvStats" class="dim"></span><a id="pvReal" href="#" download>Download the real encoded clip</a></div>
+ </div></div></div>
 <script>
 const $=s=>document.querySelector(s), api=(p,b)=>fetch(p,b?{method:'POST',body:JSON.stringify(b)}:{}).then(r=>r.json()).then(r=>{if(r&&r.error)toast('Problem: '+r.error,true);return r});
 const gb=b=>b>=1e12?(b/1e12).toFixed(2)+' TB':b>=1e9?(b/1e9).toFixed(1)+' GB':(b/1e6).toFixed(0)+' MB';
@@ -152,10 +189,13 @@ const jsArg=v=>esc(JSON.stringify(String(v)));
 let toastTimer;
 function toast(m,bad){const t=$('#toast');t.textContent=m;t.className=bad?'bad':'';t.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.style.display='none',bad?Math.max(8000,m.length*90):Math.max(2500,m.length*60))}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.t).classList.add('on');
-  if(b.dataset.t=='cleanup'){loadDupes();renderJunk()} if(b.dataset.t=='health')loadHealth()});
+  if(b.dataset.t=='cleanup'){loadDupes();renderJunk()} if(b.dataset.t=='health')loadHealth(); if(b.dataset.t=='presets'&&!$('#pDirty').textContent)renderPresets()});
 
+let favState='';
+function setFavicon(){const q=S.queue||{},st=q.current?'working':q.waiting?'paused':'idle';if(st!==favState){favState=st;$('#favicon').href='/favicon.svg?s='+st}}
 async function poll(){
   S=await api('/api/state');
+  setFavicon();
   const sc=S.scan, q=S.queue;
   $('#status').textContent=sc.running?(sc.phase||`scanning ${sc.done}/${sc.total}…`):sc.error?'scan error: '+sc.error:q.running?`encoding (${q.items.filter(i=>i.status=='queued').length} queued)`:`${S.cached} files known`;
   $('#scanBtn').disabled=sc.running;
@@ -166,7 +206,8 @@ async function poll(){
   if((V.running||vfWas)&&$('#health').classList.contains('on'))renderVerify(V); vfWas=V.running;$('#junkFind').disabled=S.junk.running;
   if(junkWas&&!S.junk.running&&$('#cleanup').classList.contains('on'))renderJunk(); junkWas=S.junk.running; $('#plexSync').disabled=S.media.running;
   if(S.preview.running)$('#status').textContent=`making preview ${(S.preview.progress||0).toFixed(0)}%`;
-  if(prevWas&&!S.preview.running){toast(S.preview.msg);if(S.preview.url)window.open(S.preview.url,'_blank')} prevWas=S.preview.running;
+  if(S.preview.running&&$('#pv').classList.contains('on')){$('#pvStep').textContent=`${S.preview.step||'Working'}… ${(S.preview.progress||0).toFixed(0)}%`;$('#pvProg').style.width=(S.preview.progress||0)+'%'}
+  if(prevWas&&!S.preview.running&&$('#pv').classList.contains('on')){if(S.preview.result)showCompare(S.preview.result);else{closePreview();if(S.preview.msg!='cancelled')toast(S.preview.msg,true)}} prevWas=S.preview.running;
   const fr=$('#firstRun');fr.style.display=S.config.libraries.length?'none':'block';
   if(!S.config.libraries.length&&!$('#frPreset').options.length)$('#frPreset').innerHTML=Object.keys(S.config.presets).map(n=>`<option>${esc(n)}</option>`).join('');
   if(mediaWas&&!S.media.running){loadRecs()} mediaWas=S.media.running;
@@ -179,10 +220,34 @@ function fillPresetSelects(){
 }
 async function loadRecs(){recs=await api('/api/recommend?scope='+encodeURIComponent($('#scope').value));heldTotal=recs.reduce((a,r)=>a+(r.held||0),0);renderRecs()}
 async function restore(key){if(!confirm('Put the original files back and delete the encoded versions?'))return;const r=await api('/api/originals/restore',{key});if(!r.error)toast((r.restored+' files restored'));loadRecs()}
-async function preview(p){const r=await api('/api/preview',{path:p});if(!r.error){toast('making a 20 s preview…');prevWas=true}}
+async function preview(p){const r=await api('/api/preview',{path:p});if(r.error)return;prevWas=true;
+  $('#pvTitle').textContent=p.split(/[\\/]/).pop();$('#pvSub').textContent='';$('#pvView').style.display='none';$('#pvWait').style.display='block';
+  $('#pvStep').textContent='Making a 20 second preview…';$('#pvProg').style.width='0%';$('#pv').classList.add('on')}
+let cmpPos=50,syncTimer=null;
+function setCmp(x){cmpPos=Math.max(0,Math.min(100,x));$('#vB').style.clipPath=`inset(0 0 0 ${cmpPos}%)`;$('#hdl').style.left=`calc(${cmpPos}% - 1px)`}
+function showCompare(r){const vA=$('#vA'),vB=$('#vB');
+  $('#pvSub').textContent=`${r.preset} · ${r.seconds} s sample`;$('#pvWait').style.display='none';$('#pvView').style.display='block';
+  $('#pvStats').textContent=`${r.src} → ${r.dst}`+(r.saving!=null?` · ${r.saving}% smaller`:'')+(r.match!=null?` · picture match ${r.match.toFixed(2)}${r.match<0.9?' (visibly softer: consider a gentler preset)':''}`:'');
+  $('#pvReal').href=r.real;vA.src=r.before;vB.src=r.after;setCmp(50);
+  let ready=0;const go=()=>{if(++ready<2)return;vA.currentTime=0;vB.currentTime=0;vB.play().catch(()=>{});vA.play().catch(()=>{});$('#pvPlay').textContent='⏸ Pause'};
+  vA.oncanplay=()=>{vA.oncanplay=null;go()};vB.oncanplay=()=>{vB.oncanplay=null;go()};
+  clearInterval(syncTimer);syncTimer=setInterval(()=>{            // keep the two players frame-locked
+    if(vB.paused!==vA.paused)(vB.paused?vA.pause():vA.play().catch(()=>{}));
+    const d=vB.currentTime-vA.currentTime;
+    if(vB.paused||vA.seeking){vA.playbackRate=1;if(vB.paused&&Math.abs(d)>0.01&&!vA.seeking)vA.currentTime=vB.currentTime;return}
+    if(Math.abs(d)>0.3){vA.playbackRate=1;vA.currentTime=vB.currentTime}       // looped or stalled: jump
+    else vA.playbackRate=Math.abs(d)<0.015?1:1+Math.max(-0.2,Math.min(0.2,d*3))   // small drift: speed up/slow down a touch
+  },100)}
+function closePreview(){if(S.preview?.running&&$('#pvWait').style.display!='none')api('/api/preview/cancel',{});prevWas=false;$('#pv').classList.remove('on');clearInterval(syncTimer);['#vA','#vB'].forEach(s=>{const v=$(s);v.pause();v.removeAttribute('src');v.load()})}
+$('#pvClose').onclick=closePreview;$('#pv').onclick=e=>{if(e.target.id=='pv')closePreview()};
+document.addEventListener('keydown',e=>{if(e.key=='Escape'&&$('#pv').classList.contains('on'))closePreview()});
+$('#pvPlay').onclick=()=>{const vA=$('#vA'),vB=$('#vB');if(vB.paused){vA.currentTime=vB.currentTime;vB.play();vA.play();$('#pvPlay').textContent='⏸ Pause'}else{vB.pause();vA.pause();$('#pvPlay').textContent='▶ Play'}};
+(()=>{const c=$('#cmp');let drag=false;const at=e=>{const b=c.getBoundingClientRect();setCmp((e.clientX-b.left)/b.width*100)};
+  c.addEventListener('pointerdown',e=>{drag=true;c.setPointerCapture(e.pointerId);at(e)});c.addEventListener('pointermove',e=>{if(drag)at(e)});
+  c.addEventListener('pointerup',()=>drag=false);c.addEventListener('pointercancel',()=>drag=false)})();
 function renderRecs(){
   const names=Object.keys(S.config.presets), only=$('#onlySave').checked;
-  const shown=recs.filter(r=>!only||r.n_encode>0);
+  const shown=recs.filter(r=>!only||r.n_encode>0||open.has(r.key));
   const now=recs.reduce((a,r)=>a+r.size,0), after=recs.reduce((a,r)=>a+r.est,0), nEnc=recs.reduce((a,r)=>a+r.n_encode,0);
   $('#cards').innerHTML=`<div class="card"><b>${gb(now)}</b><span>scanned</span></div><div class="card"><b class="sv">${gb(now-after)}</b><span>estimated savings (${now?Math.round((now-after)/now*100):0}%)</span></div><div class="card"><b>${nEnc}</b><span>files to encode</span></div><div class="card"><b>${shown.length}</b><span>shows / movies shown</span></div><div class="card"><b>${gb(heldTotal)}</b><span>originals held ${heldTotal?'<button id="delOrig" class="danger" style="margin-left:6px;padding:2px 8px">Delete all</button>':''}</span></div>`;
   if(heldTotal)$('#delOrig').onclick=async()=>{const v=S.verify||{},bad=(v.results||[]).filter(r=>!r.ok).length;
@@ -205,7 +270,10 @@ function renderRecs(){
     tr.querySelector('input').onchange=e=>{e.target.checked?sel.add(tr.dataset.k):sel.delete(tr.dataset.k)}});
 }
 async function setOverride(key,preset){const r=recs.find(x=>x.key==key);await api('/api/override',{key,preset:preset==r.auto_preset?'':preset});S=await api('/api/state');loadRecs()}
-async function protect(key,on){if(on&&!confirm('Never touch this? It will be skipped by scans, the queue and auto mode.'))return;await api('/api/protect',{key,on});toast(on?'protected':'unprotected');loadRecs()}
+async function protect(key,on){if(on&&!confirm('Never touch this? It will be skipped by scans, the queue and auto mode.'))return;
+  const r=await api('/api/protect',{key,on});if(r.error)return;
+  const it=recs.find(x=>x.key==key);if(it){it.protected=on;if(on){it.files.forEach(f=>{if(f.action=='encode'){f.action='skip';f.reasons=['protected']}});it.n_encode=0;it.est=it.size;sel.delete(key)}renderRecs()}
+  toast(on?'protected: Reclaimer will leave it alone':'unprotected');loadRecs()}
 async function retry(p){await api('/api/retry',{paths:[p]});loadRecs()}
 $('#frAdd').onclick=async()=>{const path=$('#frPath').value.trim();if(!path)return toast('enter a folder path');
   await api('/api/config',{libraries:[{path,type:$('#frType').value,preset:$('#frPreset').value}]});S=await api('/api/state');renderSettings();fillPresetSelects();$('#firstRun').style.display='none';
@@ -227,18 +295,63 @@ $('#qStart').onclick=()=>api('/api/queue/start',{}).then(poll);$('#qForce').oncl
 $('#qCancel').onclick=()=>confirm('Kill the current encode? The original is untouched.')&&api('/api/queue/cancel',{}).then(poll);
 $('#qClear').onclick=()=>api('/api/queue/clear',{}).then(poll);
 
+const SIZES=[[2160,'4K'],[1440,'1440p'],[1080,'1080p (Full HD)'],[720,'720p (HD)'],[480,'480p (DVD)']];
+const AUDIO={stereo:['Stereo','2-channel AAC: smallest, plays on everything. Fine for TV speakers and headphones.'],
+  surround:['Keep surround','Keeps 5.1 sound. Huge lossless tracks (TrueHD, DTS-HD) become Dolby Digital Plus 5.1.'],keep:['Leave as-is','Never touches the sound.']};
+const BURN={none:['Never','Subtitles stay as separate tracks you can turn on and off.'],ass:['Styled subtitles','Burns in styled (ASS/SSA) subtitles, which Roku and Xbox can\'t show on their own. Normal subtitles stay separate.'],
+  'ass+image':['Styled + picture subtitles','Also burns in Blu-ray/DVD picture subtitles.']};
+const qWord=cq=>cq<=21?'Very high quality':cq<=24?'High quality':cq<=27?'Balanced':cq<=30?'Compact':'Very small';
+function presetUse(n){return recs.filter(r=>r.preset==n).length}
+function chips(p){return [SIZES.find(s=>s[0]==p.max_height)?.[1]?.split(' ')[0]||p.max_height+'p',qWord(p.cq),AUDIO[p.audio]?.[0]||p.audio,
+  p.hdr_to_sdr?'HDR → normal colour':'Keeps HDR',p.ten_bit?'10-bit':'',p.denoise&&p.denoise!='none'?'Grain cleanup':'',p.burn_subs&&p.burn_subs!='none'?'Burns subtitles':''].filter(Boolean)}
 function renderPresets(){
-  const P=S.config.presets;
-  $('#pBody').innerHTML=Object.entries(P).map(([n,p])=>`<tr data-n="${esc(n)}"><td>${esc(n)}</td><td><select class="mh">${[2160,1440,1080,720,480].map(h=>`<option ${h==p.max_height?'selected':''}>${h}</option>`).join('')}</select></td>
-   ${['2160','1080','720','480'].map(t=>`<td><input type="number" step="0.5" class="cap" data-t="${t}" value="${p.caps[t]??''}"></td>`).join('')}
-   <td><input type="number" class="cq" min="15" max="40" value="${p.cq}"></td><td><select class="au">${['stereo','surround','keep'].map(a=>`<option ${a==p.audio?'selected':''}>${a}</option>`).join('')}</select></td>
-   <td><input type="checkbox" class="hdr" ${p.hdr_to_sdr?'checked':''}></td><td><input type="checkbox" class="tenbit" ${p.ten_bit?'checked':''}></td><td><select class="dn">${[['none','none'],['light','light'],['medium','medium']].map(([v,t])=>`<option value="${v}" ${(p.denoise||'none')==v?'selected':''}>${t}</option>`).join('')}</select></td><td><select class="burn">${[['none','none'],['ass','ASS/SSA only'],['ass+image','ASS + PGS/VobSub']].map(([v,t])=>`<option value="${v}" ${(p.burn_subs===true?'ass':p.burn_subs||'none')==v?'selected':''}>${t}</option>`).join('')}</select></td><td><button class="del">✕</button></td></tr>`).join('');
-  document.querySelectorAll('#pBody .del').forEach(b=>b.onclick=()=>{b.closest('tr').remove()});
+  const P=S.config.presets,D=new Set(S.defaultPresets||[]);
+  $('#newFrom').innerHTML=Object.keys(P).map(n=>`<option>${esc(n)}</option>`).join('');
+  $('#pList').innerHTML=Object.entries(P).map(([n,p])=>{const used=presetUse(n);return `<div class="pcard" data-n="${esc(n)}">
+   <div class="ptop"><b>${esc(n)}</b>${chips(p).map(c=>`<span class="tag">${esc(c)}</span>`).join('')}<span class="grow"></span>
+    <span class="dim" style="font-size:12px">${used?`used by ${used} show${used>1?'s':''}/movie${used>1?'s':''}`:''}</span>
+    <button class="pe">Edit</button>${D.has(n)?'':'<button class="pdel danger" title="delete this preset">Delete</button>'}</div>
+   <div class="pdesc">${esc(p.desc||'')}</div>
+   <div class="pedit" style="display:none">
+    <div class="pf"><label>Description</label><input type="text" class="pd" value="${esc(p.desc||'')}" placeholder="what kind of video is this preset for?"></div>
+    <h4>Picture</h4>
+    <div class="pf"><label>Largest picture size</label><select class="mh">${SIZES.map(([v,t])=>`<option value="${v}" ${v==p.max_height?'selected':''}>${t}</option>`).join('')}</select>
+     <span class="hint">Anything bigger is scaled down to this. Nothing is ever scaled up.</span></div>
+    <div class="pf"><label>Quality</label><span class="dim" style="font-size:12px">Smaller files</span><input type="range" class="cq" min="18" max="34" value="${52-p.cq}" style="width:220px"><span class="dim" style="font-size:12px">Better picture</span>
+     <b class="qw">${qWord(p.cq)}</b><span class="hint">"Balanced" suits most things. Move right if you notice blur or blockiness in previews.</span></div>
+    <div class="pf"><label><input type="checkbox" class="hdr" ${p.hdr_to_sdr?'checked':''}> Convert HDR to normal colour</label>
+     <span class="hint">HDR only looks right on HDR TVs; on everything else it looks washed out. Leave this on unless the preset is only for watching on an HDR TV.</span></div>
+    <div class="pf"><label><input type="checkbox" class="tenbit" ${p.ten_bit?'checked':''}> 10-bit colour</label>
+     <span class="hint">Keeps dark scenes and smooth skies from turning into visible bands or blotches. Slightly bigger files; plays on every modern TV and phone.</span></div>
+    <div class="pf"><label>Film grain cleanup</label><select class="dn">${[['none','Off'],['light','Light'],['medium','Strong']].map(([v,t])=>`<option value="${v}" ${(p.denoise||'none')==v?'selected':''}>${t}</option>`).join('')}</select>
+     <span class="hint">Grain is the most expensive thing to keep. Smoothing it saves a lot of space on older films, but softens texture: preview first.</span></div>
+    <h4>Sound</h4>
+    <div class="pf"><label>Audio</label><select class="au">${Object.entries(AUDIO).map(([v,[t]])=>`<option value="${v}" ${v==p.audio?'selected':''}>${t}</option>`).join('')}</select><span class="hint ah">${AUDIO[p.audio]?.[1]||''}</span></div>
+    <h4>Subtitles</h4>
+    <div class="pf"><label>Burn into the picture</label><select class="burn">${Object.entries(BURN).map(([v,[t]])=>`<option value="${v}" ${(p.burn_subs===true?'ass':p.burn_subs||'none')==v?'selected':''}>${t}</option>`).join('')}</select><span class="hint bh">${(BURN[p.burn_subs===true?'ass':p.burn_subs||'none']||BURN.none)[1]}</span></div>
+    <details><summary>Size limits (advanced)</summary>
+     <p class="hint" style="margin:6px 0">The most data per second Reclaimer will ever spend, by picture size, in megabits per second. Most files land well under this; it only stops busy scenes from ballooning. 50/60 fps video automatically gets 1.5× more.</p>
+     <div class="bar">${[['2160','4K'],['1080','1080p'],['720','720p'],['480','480p']].map(([t,l])=>`${l} <input type="number" step="0.5" min="0" class="cap" data-t="${t}" value="${p.caps[t]??''}" placeholder="–" style="width:64px"> Mbps`).join('&nbsp;&nbsp;')}</div>
+    </details>
+   </div></div>`}).join('');
+  document.querySelectorAll('.pcard').forEach(c=>{
+    c.querySelector('.pe').onclick=()=>{const e=c.querySelector('.pedit'),o=e.style.display=='none';e.style.display=o?'block':'none';c.querySelector('.pe').textContent=o?'Done':'Edit'};
+    const del=c.querySelector('.pdel');if(del)del.onclick=()=>{if(confirm(`Delete the preset "${c.dataset.n}"? Shows using it go back to their library's default.`)){c.remove();markDirty()}};
+    c.querySelector('.cq').oninput=e=>{c.querySelector('.qw').textContent=qWord(52-e.target.value)};
+    c.querySelector('.au').onchange=e=>{c.querySelector('.ah').textContent=AUDIO[e.target.value][1]};
+    c.querySelector('.burn').onchange=e=>{c.querySelector('.bh').textContent=BURN[e.target.value][1]};
+    c.querySelectorAll('input,select').forEach(x=>x.addEventListener('change',markDirty));
+  });
 }
-function readPresets(){const out={};document.querySelectorAll('#pBody tr').forEach(tr=>{const caps={};tr.querySelectorAll('.cap').forEach(i=>{if(i.value)caps[i.dataset.t]=+i.value});
-  out[tr.dataset.n]={max_height:+tr.querySelector('.mh').value,caps,cq:+tr.querySelector('.cq').value,audio:tr.querySelector('.au').value,hdr_to_sdr:tr.querySelector('.hdr').checked,ten_bit:tr.querySelector('.tenbit').checked,denoise:tr.querySelector('.dn').value,burn_subs:tr.querySelector('.burn').value}});return out}
-$('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return;S.config.presets=readPresets();S.config.presets[n]={max_height:1080,caps:{1080:5,720:3,480:1.5},cq:26,audio:'stereo',hdr_to_sdr:true,burn_subs:'none',ten_bit:false,denoise:'none'};$('#newPreset').value='';renderPresets()};
-$('#savePresets').onclick=async()=>{const presets=readPresets();for(const p of Object.values(presets))if(!Object.keys(p.caps).length)return toast('every preset needs at least one cap');await api('/api/config',{presets});toast('presets saved');S=await api('/api/state');loadRecs()};
+function markDirty(){$('#pDirty').textContent='Unsaved changes'}
+function readPresets(){const out={};document.querySelectorAll('.pcard').forEach(c=>{const caps={};c.querySelectorAll('.cap').forEach(i=>{if(i.value)caps[i.dataset.t]=+i.value});
+  out[c.dataset.n]={desc:c.querySelector('.pd').value.trim(),max_height:+c.querySelector('.mh').value,caps,cq:52-(+c.querySelector('.cq').value),audio:c.querySelector('.au').value,
+   hdr_to_sdr:c.querySelector('.hdr').checked,ten_bit:c.querySelector('.tenbit').checked,denoise:c.querySelector('.dn').value,burn_subs:c.querySelector('.burn').value}});return out}
+$('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return toast('give the new preset a name first',true);const all=readPresets();if(all[n])return toast('a preset with that name already exists',true);
+  all[n]={...JSON.parse(JSON.stringify(all[$('#newFrom').value])),desc:''};S.config.presets=all;$('#newPreset').value='';renderPresets();markDirty();
+  const c=[...document.querySelectorAll('.pcard')].pop();c.querySelector('.pe').click();c.scrollIntoView({behavior:'smooth',block:'center'})};
+$('#savePresets').onclick=async()=>{const presets=readPresets();for(const [n,p] of Object.entries(presets))if(!Object.keys(p.caps).length)return toast(`"${n}" needs at least one size limit (open Edit → Size limits)`,true);
+  const r=await api('/api/config',{presets});if(r.error)return;toast('presets saved');$('#pDirty').textContent='';S=await api('/api/state');renderPresets();loadRecs()};
 
 function renderSettings(){
   const c=S.config;
@@ -254,8 +367,33 @@ function renderSettings(){
   $('#kodiUrl').value=c.kodi_url||'';$('#kodiUser').value=c.kodi_user||'';$('#kodiPass').value=c.kodi_password||'';
   $('#ruleBody').innerHTML=(c.plex_rules||[]).map(ruleRow).join('');bindRules();
 }
-async function loadLangs(){const L=await api('/api/languages',{});if(!L.length)return;const keep=new Set(S.config.audio_keep_langs||[]);
-  $('#langBody').innerHTML=L.map(l=>`<tr><td><input type="checkbox" class="lk" value="${esc(l.lang)}" ${keep.has(l.lang)?'checked':''}></td><td>${esc(l.name)} <span class="dim">${esc(l.lang)}</span>${l.guessed?` <span class="dim" title="these tracks had no language tag; their track title named the language">(${l.guessed} from track titles)</span>`:''}</td><td class="num">${l.files}</td><td class="num">${gb(l.bytes)}</td><td class="num dim">${l.only} files</td></tr>`).join('')}
+let LANGS=[];
+async function loadLangs(){const L=await api('/api/languages',{});if(!L.length)return;LANGS=L;const keep=new Set(S.config.audio_keep_langs||[]);
+  $('#langBody').innerHTML=L.map(l=>`<tr><td><input type="checkbox" class="lk" value="${esc(l.lang)}" ${keep.has(l.lang)?'checked':''}></td><td>${esc(l.name)} <span class="dim">${esc(l.lang)}</span>${l.guessed?` <span class="dim" title="these tracks had no language tag; their track title named the language">(${l.guessed} from track titles)</span>`:''}</td><td class="num">${l.files}</td><td class="num">${gb(l.bytes)}</td><td class="num dim">${l.only} files</td><td><button class="lsee" data-l="${esc(l.lang)}">What's this?</button></td></tr>`).join('');
+  document.querySelectorAll('.lsee').forEach(b=>b.onclick=()=>langItems(b))}
+async function langItems(b){const tr=b.closest('tr'),nx=tr.nextElementSibling;if(nx&&nx.classList.contains('lx')){nx.remove();b.textContent="What's this?";if(langDirty){langDirty=false;loadLangs()}return}
+  b.textContent='Hide';const I=await api('/api/language_items',{lang:b.dataset.l});const fl=I.filter(i=>i.flags).length;
+  const common=['eng','hin','jpn','spa','fra','deu','ita','kor','zho','por','rus','und'],names=Object.fromEntries(LANGS.map(l=>[l.lang,l.name]));
+  const opts=[...new Set([...LANGS.map(l=>l.lang),...common])].filter(c=>c!=b.dataset.l).map(c=>`<option value="${c}">${esc(names[c]||c)}</option>`).join('');
+  const trk=(f,t)=>`${esc(t.codec)} ${t.ch}ch${t.title?` "${esc(t.title)}"`:''}${t.guessed?' <span class="dim">(language guessed from title)</span>':''}${t.says?` <span class="warn">title says ${esc(t.says)}</span>`:''}
+   <button class="lplay" data-p="${esc(f.path)}" data-i="${t.idx}" title="play 10 seconds of this track">▶ Listen</button>
+   ${t.says_code?`<button class="lfix" data-p="${esc(f.path)}" data-i="${t.idx}" data-to="${t.says_code}">Set to ${esc(t.says)}</button>`:''}
+   <select class="lto" data-p="${esc(f.path)}" data-i="${t.idx}"><option value="">Change to…</option>${opts}<option value="?">Other code…</option></select>`;
+  tr.insertAdjacentHTML('afterend',`<tr class="lx"><td colspan="6" style="padding:8px 4px 14px">
+   <p class="hint" style="margin:0 0 8px">${I.length} show${I.length==1?'':'s'}/movies. ${fl?`<span class="warn">${fl} look mislabelled</span> (a track's own title names another language) and are listed first. `:''}<b>only track</b> means it's the file's only audio, so it's either really this language or labelled wrong. Click a title to see its files.</p>
+   ${I.map(i=>`<details class="li"><summary><b>${esc(i.title)}</b> <span class="dim">${i.type=='tv'?'TV':'movie'} · ${i.files.length} file${i.files.length==1?'':'s'} · ${gb(i.bytes)}${i.genres.length?' · '+esc(i.genres.join(', ')):''}</span>
+     ${i.flags?`<span class="tag warn">${i.flags} mislabelled?</span>`:''}${i.only?`<span class="tag">only track in ${i.only}</span>`:''}</summary>
+     <div style="margin:4px 0 8px 18px;font-size:12px">${i.files.map(f=>`<div class="lf${f.flag?' warn':''}" style="margin:6px 0">${esc(f.name)}<br><span class="dim">${f.tracks.map(t=>trk(f,t)).join(' · ')} · ${f.others.length?'also has '+esc(f.others.join(', ')):'<b>only track</b>'}</span></div>`).join('')}</div></details>`).join('')}</td></tr>`);
+  const box=tr.nextElementSibling;
+  box.querySelectorAll('.lplay').forEach(x=>x.onclick=async()=>{x.textContent='…';const r=await api('/api/track_sample',{path:x.dataset.p,idx:+x.dataset.i});x.textContent='▶ Listen';
+    if(r.url){window.lAudio?.pause();window.lAudio=new Audio(r.url);window.lAudio.play()}});
+  const relabel=async(x,to)=>{const name=x.closest('.lf').firstChild.textContent;
+    if(!confirm(`Change this track in "${name}" to ${to}?\n\nReclaimer copies the file with the new label (nothing is re-encoded), checks the copy, then swaps it in.`))return;
+    x.disabled=true;toast('relabelling… (a big file over the network can take a minute)');const r=await api('/api/relabel_track',{path:x.dataset.p,idx:+x.dataset.i,lang:to});x.disabled=false;
+    if(r.ok){toast(`now labelled ${r.name}`);const d=x.closest('.lf');d.classList.remove('warn');d.innerHTML=`<s class="dim">${esc(name)}</s> <span class="ok">✓ relabelled ${esc(r.name)}</span>`;loadLangSoon()}};
+  box.querySelectorAll('.lfix').forEach(x=>x.onclick=()=>relabel(x,x.dataset.to));
+  box.querySelectorAll('.lto').forEach(x=>x.onchange=()=>{let v=x.value;x.value='';if(v=='?')v=(prompt('3-letter language code (e.g. eng, hin, tam, tel):')||'').trim().toLowerCase();if(v)relabel(x,v)})}
+let langDirty=false;function loadLangSoon(){langDirty=true}
 const presetOpts=v=>'<option value="">(library default)</option>'+Object.keys(S.config.presets).map(n=>`<option ${n==v?'selected':''}>${esc(n)}</option>`).join('');
 const ruleRow=r=>`<tr><td><input type="text" class="rg" value="${esc(r.genre)}"></td><td><select class="rt">${presetOpts(r.tv)}</select></td><td><select class="rm">${presetOpts(r.movies)}</select></td><td><button class="del">✕</button></td></tr>`;
 function bindRules(){document.querySelectorAll('#ruleBody .del').forEach(b=>b.onclick=()=>b.closest('tr').remove())}
