@@ -7,6 +7,7 @@ reclaimer_run.log
 reclaimer_genres.json
 reclaimer_arr.json
 reclaimer_transcodes.json
+reclaimer_guesses.json
 _to_delete/
 *.tmp
 previews/

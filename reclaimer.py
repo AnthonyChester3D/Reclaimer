@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Reclaimer - find the files in a Plex library that don't belong and fix them with presets, a show-aware scanner and a browser GUI.
 
-    python reclaimer.py            # starts the GUI at http://localhost:8765 and opens your browser
+    python reclaimer.py            # starts the GUI at http://localhost:36597 and opens your browser
     python reclaimer.py --port N   # different port
 
 Needs ffmpeg + ffprobe on PATH. Settings live in reclaimer.json next to this file.
 """
-import argparse, base64, csv, html, json, os, re, shutil, statistics, subprocess, sys, tempfile, threading, time, webbrowser
+import argparse, base64, csv, html, json, os, re, shutil, socket, statistics, subprocess, sys, tempfile, threading, time, webbrowser
 from urllib.parse import quote, unquote, urlencode
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -27,6 +27,7 @@ os.environ["PATH"] = str(HERE) + os.pathsep + os.environ.get("PATH", "")
 PREVIEW_DIR = HERE / "previews"
 CONFIG_PATH, CACHE_PATH = HERE / "reclaimer.json", HERE / "reclaimer_cache.json"
 GENRES_PATH = HERE / "reclaimer_genres.json"
+GUESS_PATH = HERE / "reclaimer_guesses.json"   # online/offline genre guesses for shows setup couldn't place
 ARR_PATH, TRANSCODES_PATH = HERE / "reclaimer_arr.json", HERE / "reclaimer_transcodes.json"   # show/movie folder -> {"nfo": [...], "plex": [...]}
 STATE_PATH, LOG_PATH = HERE / "reclaimer_state.json", HERE / "reclaimer_log.csv"
 CACHE_VERSION = 3
@@ -80,6 +81,12 @@ DEFAULT_RULES = [
     {"genre": "Science Fiction|Sci-Fi & Fantasy|Fantasy|Action|Action & Adventure|War|War & Politics|Western", "tv": "Cinematic TV", "movies": ""},
     {"genre": "Comedy|Soap", "tv": "Sitcom", "movies": ""},
 ]
+# Last: everyday genres. Without it a plain drama or action movie counted as "couldn't place" even though
+# the library default was the right answer.
+GENERAL_RULE = {"genre": "Drama|Crime|Thriller|Mystery|Suspense|Romance|Family|Adventure|Biography|History|Musical|Music|Sport|War|Western|"
+                "Action|Science Fiction|Fantasy|Comedy|Martial Arts|Superhero|Disaster|Film-Noir|Mini-Series|Miniseries|TV Movie|Indie|"
+                "Short|Food|Travel|Home and Garden|Soap|Series", "tv": "Live Action TV", "movies": "Movies HD"}
+DEFAULT_RULES.append(GENERAL_RULE)
 DEFAULT_CONFIG = {
     "libraries": [],          # {"path": r"\\mynas\video\Movies", "type": "movies"|"tv", "preset": "Movies HD"}
     "presets": DEFAULT_PRESETS,
@@ -114,6 +121,12 @@ DEFAULT_CONFIG = {
     "verify": "full",         # full = decode the whole output + compare pictures; quick = compare pictures; off
     "verify_min_ssim": 0.80,  # a sampled picture scoring below this against the original fails the encode
     "protected": [],          # show/movie folders or files that are never touched
+    "port": 36597,            # where the page lives: http://localhost:<port> (restart to apply)
+    "online_lookup": False,   # look up genres on TVmaze/TMDB for things setup couldn't place (sends their names)
+    "tmdb_key": "",           # optional free TMDB key: better matches, and movies too
+    "setup_done": False,      # the setup questions have been answered
+    "setup_presets": {},
+    "setup_answers": {},      # last answers, so re-running setup starts from them      # what setup last produced, to tell which presets were edited by hand since
     "audio_lang_filter": False,   # drop audio tracks whose language isn't in audio_keep_langs
     "audio_keep_langs": ["eng"],
     "audio_keep_unknown": True,   # keep tracks with no language tag
@@ -124,21 +137,21 @@ PREVIEW = {"running": False, "msg": "", "result": None, "step": "", "progress": 
 TRAY = {}
 MEDIA = {"running": False, "msg": ""}
 PRESET_DESCRIPTIONS = {
-    "Live Action TV": "Everyday TV dramas and shows. Full HD, small files, stereo sound.",
-    "Anime": "Japanese animation. Flat colours shrink well, and styled subtitles are burned into the picture so every TV and phone can show them.",
+    "Live Action TV": "Everyday TV dramas and shows.",
+    "Anime": "Japanese animation. Styled subtitles are burned into the picture so every TV and phone can show them.",
     "Cartoons HD": "Western cartoons in HD. Flat colours and clean lines shrink a lot without looking any different.",
-    "Cartoons SD": "Older cartoons in DVD quality. Kept at their original size, just in smaller files.",
-    "Movies HD": "Most movies. Full HD with surround sound kept.",
-    "Movies SD": "DVD-quality movies. Kept at DVD size, with surround sound kept.",
+    "Cartoons SD": "Older DVD-quality cartoons.",
+    "Movies HD": "Most movies.",
+    "Movies SD": "DVD-quality movies.",
     "Movies 4K": "Movies you want to keep in 4K and HDR. Trims oversized files without dropping them to 1080p.",
-    "Cinematic TV": "Big-budget shows with effects and dark scenes. A little more room than everyday TV.",
+    "Cinematic TV": "Big-budget shows with effects and dark scenes. Gets a little more room than everyday TV.",
     "Sitcom": "Comedies and kids' shows. Simple sets and bright lighting shrink very well.",
-    "True Crime": "True crime and interview-heavy documentaries. 720p and very small files: fine for background viewing.",
+    "True Crime": "True crime and interview-heavy documentaries.",
     "CG Animation": "Pixar-style 3D animation. Smooth gradients need a little more room than flat cartoons.",
-    "Talk & Reality": "Reality TV, game shows, talk shows, news and stand-up. 720p and very small files.",
-    "Documentary": "Nature and history documentaries. Extra room so scenery stays sharp.",
-    "Concerts": "Concert films. Picture like Movies HD, with surround or Atmos sound kept.",
-    "Sports": "Live sports. Constant fast motion, so it gets the most room of any 1080p preset.",
+    "Talk & Reality": "Reality TV, game shows, talk shows, news and stand-up.",
+    "Documentary": "Nature and history documentaries. A little extra room so scenery stays sharp.",
+    "Concerts": "Concert films. Surround sound is kept when you have a system for it.",
+    "Sports": "Live sports. Constant fast motion, so it gets extra room.",
     "Classic Film": "Older films with visible film grain. Gently smooths the grain, which saves a lot of space.",
     "Dark & Moody": "Horror and other dark films. 10-bit colour keeps shadows smooth instead of blotchy.",
     "Lectures": "Courses, talks and tutorials. Slides and talking heads need very little.",
@@ -774,8 +787,174 @@ def match_dir(idx, server_file):
             return next(iter(hits))
     return None
 
+# ---- genre guesses for things with no usable genres -------------------------------------------------
+GUESS = {}
+_TMDB_GENRES = {}
+
+def _get_json(url, headers=None):
+    req = Request(url, headers={"User-Agent": "Reclaimer (home media tool)", "Accept": "application/json", **(headers or {})})
+    with urlopen(req, timeout=12) as r:
+        return json.loads(r.read())
+
+def _title_year(name):
+    m = re.match(r"^(.*?)\s*[\(\[]((?:19|20)\d\d)[\)\]]", name)
+    title, year = (m.group(1), int(m.group(2))) if m else (re.sub(r"[\(\[].*$", "", name), None)
+    return re.sub(r"[._]+", " ", title).strip(), year
+
+def _words(t):
+    return set(re.findall(r"[a-z0-9]+", t.lower().replace("&", "and"))) - {"the", "a", "an", "and", "of"}
+
+def _close(a, b, ya=None, yb=None):
+    wa, wb = _words(a), _words(b)
+    if not wa or not wb:
+        return False
+    if ya and yb and abs(ya - yb) > 1:
+        return False
+    small = min(wa, wb, key=len)                     # "Dark" must not match "Dark Matter"
+    return len(wa & wb) / len(wa | wb) >= 0.6 or (len(small) >= 2 and (wa <= wb or wb <= wa))
+
+def _searches(title):
+    """The full name, then the part before a colon or dash: "Naruto: The Ocean Cut" also tries "Naruto"."""
+    out = [title]
+    short = re.split(r"\s*[:\u2013\u2014]\s*|\s+-\s+", title)[0].strip()
+    if short and short != title:
+        out.append(short)
+    return out
+
+def offline_guess(infos):
+    """Japanese audio + styled (ASS/SSA) subtitles in most episodes is almost always anime."""
+    if not infos:
+        return None
+    hits = sum(1 for i in infos if any(a["lang"] == "jpn" for a in i["audio"]) and any(s["codec"] in ("ass", "ssa") for s in i["subs"]))
+    if hits * 2 > len(infos):
+        return {"genres": ["anime"], "source": "Japanese audio with styled subtitles"}
+    return None
+
+def _tvmaze(title, year, ids):
+    show = None
+    for kind, key in (("imdb", "imdb"), ("tvdb", "thetvdb")):
+        v = next((i.split(":", 1)[1] for i in ids if i.startswith(kind + ":")), None)
+        if v:
+            try:
+                show = _get_json(f"https://api.tvmaze.com/lookup/shows?{key}={quote(v)}")
+                break
+            except Exception:
+                pass
+    if not show:
+        for q in _searches(title):
+            time.sleep(0.5)                                 # TVmaze allows ~20 requests per 10 s
+            try:
+                res = _get_json("https://api.tvmaze.com/search/shows?q=" + quote(q))
+            except Exception:
+                continue
+            for r in res[:5]:
+                sh = r.get("show") or {}
+                y = int(sh["premiered"][:4]) if sh.get("premiered") else None
+                if _close(q, sh.get("name", ""), year if q == title else None, y):
+                    show = sh
+                    break
+            if show:
+                break
+    if not show:
+        return None
+    g = [x.lower() for x in show.get("genres") or []]
+    if show.get("type") == "Animation" and show.get("language") == "Japanese":
+        g.append("anime")
+    if show.get("type") in ("Reality", "Talk Show", "Game Show", "News", "Sports", "Documentary"):
+        g.append(show["type"].lower())
+    if show.get("type") == "Animation":
+        g.append("animation")
+    return {"genres": sorted(set(g)), "source": "TVmaze: " + show.get("name", "")} if g else None
+
+def _tmdb(title, year, ids, kind):
+    key = CFG.get("tmdb_key", "").strip()
+    if not key:
+        return None
+    auth = {"Authorization": "Bearer " + key} if len(key) > 40 else {}    # v4 read token or v3 api key
+    def get(path, **params):
+        if not auth:
+            params["api_key"] = key
+        return _get_json(f"https://api.themoviedb.org/3{path}?" + urlencode(params), auth)
+    t = "tv" if kind == "tv" else "movie"
+    if t not in _TMDB_GENRES:
+        _TMDB_GENRES[t] = {g["id"]: g["name"].lower() for g in get(f"/genre/{t}/list").get("genres", [])}
+    hit = None
+    imdb = next((i.split(":", 1)[1] for i in ids if i.startswith("imdb:")), None)
+    if imdb:
+        r = get(f"/find/{imdb}", external_source="imdb_id")
+        hit = (r.get(f"{t}_results") or [None])[0]
+    if not hit:
+        tm = next((i.split(":", 1)[1] for i in ids if i.startswith("tmdb:")), None)
+        if tm:
+            try:
+                hit = get(f"/{t}/{tm}")
+                hit["genre_ids"] = [g["id"] for g in hit.get("genres", [])]
+            except Exception:
+                hit = None
+    if not hit:
+        for q in _searches(title):
+            params = {"query": q}
+            if year and q == title:
+                params["first_air_date_year" if t == "tv" else "year"] = year
+            for r in get(f"/search/{t}", **params).get("results", [])[:5]:
+                name = r.get("name") or r.get("title") or ""
+                d = r.get("first_air_date") or r.get("release_date") or ""
+                if _close(q, name, year if q == title else None, int(d[:4]) if d[:4].isdigit() else None):
+                    hit = r
+                    break
+            if hit:
+                break
+    if not hit:
+        return None
+    g = [_TMDB_GENRES[t].get(i, "") for i in hit.get("genre_ids", [])]
+    g = [x for x in g if x]
+    if "animation" in g and hit.get("original_language") == "ja":
+        g.append("anime")
+    return {"genres": sorted(set(g)), "source": "TMDB: " + (hit.get("name") or hit.get("title") or "")} if g else None
+
+def guess_genres(item, kind, infos):
+    """Best guess at an item's genres: offline anime check first, then TMDB (if a key is set), then TVmaze for TV."""
+    ck = item + ("|tmdb" if CFG.get("tmdb_key") else "")       # adding a TMDB key retries earlier misses
+    if ck in GUESS:
+        return GUESS[ck]
+    g = offline_guess(infos)
+    if not g and CFG.get("online_lookup"):
+        title, year = _title_year(Path(item).name)
+        ids = set(GENRES.get(item, {}).get("ids", []))
+        for fn in ((lambda: _tmdb(title, year, ids, kind)), (lambda: _tvmaze(title, year, ids) if kind == "tv" else None)):
+            try:
+                g = fn()
+            except Exception as e:
+                print(f"genre lookup for {title} failed: {e}")
+                g = None
+            if g:
+                break
+    if g or CFG.get("online_lookup"):               # remember misses too, so they aren't looked up every time
+        GUESS[ck] = g
+    return g
+
+def suggest(keys):
+    out, want, by = {}, set(keys), {}
+    with LOCK:
+        infos = list(all_infos())
+    for i in infos:
+        l = library_of(i["path"])
+        if l and item_key(i["path"], l) in want:
+            by.setdefault(item_key(i["path"], l), []).append(i)
+    for k in keys:
+        lib = library_of(k)
+        if not lib:
+            continue
+        g = guess_genres(k, lib["type"], by.get(k, []))
+        if g:
+            p = rule_preset(set(g["genres"]) | item_genres(k), lib["type"], k)
+            if p:
+                out[k] = {"preset": p, "source": g["source"], "genres": g["genres"]}
+    save_json(GUESS_PATH, GUESS)
+    return out
+
 def rule_preset(genres, kind, item):
-    for rule in CFG["plex_rules"]:
+    for rule in CFG["plex_rules"] + [GENERAL_RULE]:     # everyday genres always last, even if a saved rule list lacks them
         alts = [{g.strip().lower() for g in alt.split("+") if g.strip()} for alt in rule["genre"].split("|")]
         if any(need and need <= genres for need in alts) and rule.get(kind):
             name = rule[kind]
@@ -1670,7 +1849,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({"config": CFG, "scan": SCAN, "queue": QUEUE, "media": MEDIA, "preview": PREVIEW, "cached": len(CACHE),
                                   "arr": ARR, "verify": VERIFY, "junk": {"running": JUNK["running"], "msg": JUNK["msg"], "items": JUNK["items"],
                                                        "cats": {k: {"label": v[0], "default": v[1]} for k, v in JUNK_CATS.items()}},
-                                  "encoders": ["hevc_nvenc", "libx265"], "defaultPresets": list(DEFAULT_PRESETS)})
+                                  "encoders": ["hevc_nvenc", "libx265"], "defaultPresets": list(DEFAULT_PRESETS), "defaultPresetValues": DEFAULT_PRESETS,
+                                  "presetDescs": PRESET_DESCRIPTIONS})
         if path == "/api/recommend":
             with LOCK:
                 return self.send(recommendations(unquote(q.get("scope", ""))))
@@ -1683,6 +1863,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({"error": "busy encoding"})
             self.send({"ok": True})
             return shutdown_app()
+        if self.path == "/api/suggest":                # online lookups take a while; keep the page responsive
+            try:
+                return self.send(suggest(body.get("keys") or []))
+            except Exception as e:
+                return self.send({"error": str(e)}, 400)
         if self.path in ("/api/track_sample", "/api/relabel_track"):   # can take a while on a NAS; don't freeze the page
             try:
                 return self.send(track_sample(body.get("path"), int(body.get("idx"))) if self.path == "/api/track_sample"
@@ -1703,7 +1888,8 @@ class Handler(BaseHTTPRequestHandler):
                       "emby_url", "emby_key", "kodi_url", "kodi_user", "kodi_password", "burn_subs_lang",
                       "window", "pause_when_streaming", "auto_mode", "auto_interval_min", "protected",
                       "audio_lang_filter", "audio_keep_langs", "audio_keep_unknown", "audio_keep_default", "notify",
-                      "sonarr_url", "sonarr_key", "radarr_url", "radarr_key", "arr_guard", "arr_rescan", "verify", "verify_min_ssim"):
+                      "sonarr_url", "sonarr_key", "radarr_url", "radarr_key", "arr_guard", "arr_rescan", "verify", "verify_min_ssim",
+                      "setup_done", "setup_presets", "setup_answers", "port", "online_lookup", "tmdb_key"):
                 if k in b:
                     CFG[k] = b[k]
             save_json(CONFIG_PATH, CFG)
@@ -1880,43 +2066,65 @@ def running_reclaimer(port):
     """Info about a Reclaimer already on this port, or None. Only a program that answers /api/ping as
     "reclaimer" counts; anything else (your other tools included) is never contacted further."""
     try:
-        with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=5) as r:
+        with urlopen(f"http://127.0.0.1:{port}/api/ping", timeout=2) as r:
             d = json.loads(r.read())
             return d if isinstance(d, dict) and d.get("app") == "reclaimer" else None
     except Exception:
         return None
 
+DEFAULT_PORT = 36597
+OLD_PORTS = (8765,)                               # where earlier versions ran, so a leftover copy is still found
+
+def port_taken(port):
+    """Instant check that something is listening, so free ports are never pinged (on Windows a ping to a
+    closed port takes ~2 s, and checking 60 of them made startup hang)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", port))
+        return False
+    except OSError:
+        return True
+    finally:
+        s.close()
+
+def take_over(port, no_browser):
+    """Another Reclaimer answers on this port: open it if it's this version, otherwise ask it to quit.
+    Returns once it has quit; exits if it can't."""
+    other = running_reclaimer(port)
+    if not other:
+        return
+    if other.get("version") == VERSION:
+        print(f"Reclaimer is already running at http://localhost:{port} - opening it.")
+        if not no_browser:
+            webbrowser.open(f"http://localhost:{port}")
+        sys.exit(0)
+    try:
+        req = Request(f"http://127.0.0.1:{port}/api/quit", data=b"{}", headers={"Content-Type": "application/json"})
+        with urlopen(req, timeout=10) as r:
+            answer = json.loads(r.read())
+    except Exception:
+        answer = {"error": "old"}
+    if answer.get("ok"):
+        for _ in range(40):                      # wait for it to let go of the port
+            time.sleep(0.5)
+            if not running_reclaimer(port):
+                time.sleep(0.5)
+                return
+    busy = "busy" in str(answer.get("error", ""))
+    popup("An older copy of Reclaimer is still running" + (" and is in the middle of encoding, so it was left alone. "
+          "Quit it from its tray icon when it's done, then start Reclaimer again." if busy else
+          ". Quit it from its tray icon, then start Reclaimer again."))
+    if not no_browser:
+        webbrowser.open(f"http://localhost:{port}")
+    sys.exit(0)
+
 def open_server(first_port, no_browser):
-    """Bind the first free port from first_port up. If an older Reclaimer is running, take over from it;
-    if this same version is already running, just open it."""
+    """Bind the first free port from first_port up, after taking over from any other copy of Reclaimer."""
+    ranges = {p for base in {first_port, DEFAULT_PORT, *OLD_PORTS} for p in range(base, base + 20)}
+    for port in sorted(ranges):
+        if port_taken(port):
+            take_over(port, no_browser)
     for port in range(first_port, first_port + 20):
-        other = running_reclaimer(port)
-        if other and other.get("version") == VERSION:
-            print(f"Reclaimer is already running at http://localhost:{port} - opening it.")
-            if not no_browser:
-                webbrowser.open(f"http://localhost:{port}")
-            sys.exit(0)
-        if other:
-            try:
-                req = Request(f"http://127.0.0.1:{port}/api/quit", data=b"{}", headers={"Content-Type": "application/json"})
-                with urlopen(req, timeout=10) as r:
-                    answer = json.loads(r.read())
-            except Exception:
-                answer = {"error": "old"}
-            if answer.get("ok"):
-                for _ in range(40):          # wait for it to let go of the port
-                    time.sleep(0.5)
-                    try:
-                        return Server(("127.0.0.1", port), Handler), port
-                    except OSError:
-                        pass
-            busy = "busy" in str(answer.get("error", ""))
-            popup("An older copy of Reclaimer is still running" + (" and is in the middle of encoding, so it was left alone. "
-                  "Quit it from its tray icon when it's done, then start Reclaimer again." if busy else
-                  ". Quit it from its tray icon, then start Reclaimer again."))
-            if not no_browser:
-                webbrowser.open(f"http://localhost:{port}")
-            sys.exit(0)
         try:
             return Server(("127.0.0.1", port), Handler), port
         except OSError:
@@ -2548,7 +2756,7 @@ def run_tray(url, srv):
 def main():
     global CFG, CACHE, STATE
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=None, help=f"default: the Port setting ({DEFAULT_PORT})")
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--no-tray", action="store_true", help="run in the terminal instead of the system tray")
     args = ap.parse_args()
@@ -2561,16 +2769,21 @@ def main():
             p["desc"] = PRESET_DESCRIPTIONS[name]
     for name, p in DEFAULT_PRESETS.items():
         CFG["presets"].setdefault(name, p)
+    if CFG.get("rules_version", 1) < 2:              # rules saved before the everyday-genres rule existed
+        if not any("Drama" in r.get("genre", "") for r in CFG["plex_rules"]):
+            CFG["plex_rules"].append(dict(GENERAL_RULE))
+        CFG["rules_version"] = 2
     save_json(CONFIG_PATH, CFG)
     CACHE, STATE = load_cache(), load_json(STATE_PATH, {})
     GENRES.update(load_json(GENRES_PATH, {}))
     ARR_MAP.update(load_json(ARR_PATH, {}))
     TRANSCODES.update(load_json(TRANSCODES_PATH, {}))
+    GUESS.update(load_json(GUESS_PATH, {}))
     if check_tools():
         init_engine()
     else:
         print(f"{' and '.join(MISSING)} not found - the page in your browser explains how to get it.")
-    srv, port = open_server(args.port, args.no_browser)
+    srv, port = open_server(args.port or int(CFG.get("port") or DEFAULT_PORT), args.no_browser)
     threading.Thread(target=auto_loop, daemon=True).start()
     threading.Thread(target=watch_transcodes, daemon=True).start()
     url = f"http://localhost:{port}"

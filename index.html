@@ -37,7 +37,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 .row{display:grid;grid-template-columns:1fr 110px 170px 40px;gap:8px;margin-bottom:6px;align-items:center}
 .pv{position:fixed;inset:0;background:rgba(5,8,12,.82);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
 .pv.on{display:flex}.pvbox{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;width:min(1200px,96vw);max-height:94vh;overflow:auto}
-.pvhead{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}.pvhead b{font-size:15px}
+.pvhead .grow{flex:1}.pvhead{display:flex;gap:10px;align-items:baseline;margin-bottom:8px}.pvhead b{font-size:15px}
 .cmp{position:relative;background:#000;border-radius:6px;overflow:hidden;user-select:none;touch-action:none;cursor:ew-resize}
 .cmp video{display:block;width:100%;max-height:70vh;object-fit:contain}.cmp #vB{position:absolute;inset:0;height:100%}
 .hdl{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none;box-shadow:0 0 0 1px rgba(0,0,0,.4)}
@@ -54,6 +54,11 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 .pf{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 0}.pf>label{min-width:170px}
 .pf .hint,.hint{flex-basis:100%;color:var(--dim);font-size:12px;margin-left:178px;margin-top:-2px}.pf label .hint{margin-left:0}
 .pf input[type=text].pd{flex:1;min-width:240px}
+.lvl{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}.lvl button{border:0;border-radius:0;min-width:38px;background:#191c22}
+.lvl button.on{background:var(--acc);color:#0b1a2e;font-weight:600}.lvl button+button{border-left:1px solid var(--line)}
+.cat{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 0;border-bottom:1px solid var(--line)}.cat .cn{flex:1;min-width:220px}
+.cat .cm{flex-basis:100%;text-align:right;font-size:12px;color:var(--dim)}.legend{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:13px;margin:8px 0 12px}
+.choice{display:block;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer}.choice span{display:block;color:var(--dim);font-size:12px;margin-left:22px}
 #toast.bad{border-color:var(--bad);background:#3a1d1d;color:#ffd7d7;font-weight:600}
 #toast{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:6px;display:none}
 </style></head><body>
@@ -118,7 +123,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
   </div>
  </div>
  <div class="bar" style="margin:14px 0 10px"><input type="text" id="newPreset" placeholder="name for a new preset" style="width:200px"> based on <select id="newFrom"></select><button id="addPreset">Add preset</button>
-  <span class="grow"></span><span id="pDirty" class="warn"></span><button id="savePresets" class="pri">Save changes</button></div>
+  <span class="grow"></span><button id="runSetup">Run setup again</button><span id="pDirty" class="warn"></span><button id="savePresets" class="pri">Save changes</button></div>
  <div id="pList"></div>
 </section>
 <section id="settings">
@@ -158,17 +163,24 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <h3>Genre rules</h3>
  <p class="help">Genres come from your NFO files and every media server above. First matching rule wins; <code>Documentary+Crime</code> means both genres, <code>Reality|Game Show</code> means either one. Manual overrides on the Recommendations tab always win. A blank preset leaves the library's default.</p>
  <table style="max-width:640px"><thead><tr><th>Genre</th><th>TV preset</th><th>Movie preset</th><th></th></tr></thead><tbody id="ruleBody"></tbody></table>
+ <p class="hint" style="margin:6px 0 0">After these, everyday genres (Drama, Crime, Thriller, Romance, Action, Comedy and similar) always fall back to Live Action TV for shows and Movies HD for movies.</p>
  <div class="bar" style="margin-top:6px"><button id="addRule">Add rule</button></div>
  <h3>Schedule</h3>
  <div class="bar"><label class="dim"><input type="checkbox" id="winOn"> only encode between</label> <input type="number" id="winStart" min="0" max="23"> and <input type="number" id="winEnd" min="0" max="23"> o'clock
   &nbsp; <label class="dim"><input type="checkbox" id="pauseStream"> pause while someone is watching (Plex, Jellyfin, Emby or Kodi)</label></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="autoMode"> <b>auto mode</b>: rescan, queue and encode on its own every</label> <input type="number" id="autoInt" min="5"> minutes <span class="help" style="margin:0">(leave it running in the tray; new downloads get picked up)</span></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="notify"> show a Windows notification when a batch finishes</label></div>
+ <div class="bar"><label class="dim">Port <input type="number" id="port" min="1024" max="65535" style="width:90px"></label><span class="dim" style="font-size:12px">The page lives at http://localhost:<i>port</i>. Change it only if another program needs this one; takes effect after you restart Reclaimer. If it's taken, the next free port is used.</span></div>
  <div class="bar"><button id="saveSettings" class="pri">Save settings</button><span id="setMsg" class="dim"></span></div>
  <p class="help">Holding folder: <code>.reclaimer_originals</code> inside each library (with .plexignore files so Plex ignores it). <b>No space is freed until you delete it.</b> Failed/rejected files are remembered in reclaimer_state.json; use "retry" on them in the Recommendations tab.</p>
 </section>
 </main>
 <div id="toast"></div>
+<div class="pv" id="su" style="z-index:40"><div class="pvbox" style="width:min(860px,96vw)">
+ <div class="pvhead"><b id="suTitle"></b><span class="grow"></span><span class="dim" id="suStep" style="font-size:12px"></span><button id="suClose" title="close: nothing changes until the last step">✕</button></div>
+ <div id="suBody"></div>
+ <div class="bar" style="margin-top:16px"><button id="suBack">Back</button><span class="grow"></span><button id="suNext" class="pri">Next</button></div>
+</div></div>
 <div class="pv" id="pv"><div class="pvbox">
  <div class="pvhead"><b id="pvTitle">Preview</b><span id="pvSub" class="dim"></span><span class="grow"></span><button id="pvClose">✕ Close</button></div>
  <div id="pvWait" class="pvwait"><div id="pvStep">Making a 20 second preview…</div><div class="prog"><i id="pvProg" style="width:0%"></i></div></div>
@@ -218,7 +230,8 @@ function fillPresetSelects(){
   const sc=$('#scope'); if(sc.dataset.n!=S.config.libraries.length){sc.innerHTML='<option value="">All libraries</option>'+S.config.libraries.map(l=>`<option value="${esc(l.path)}">${esc(l.path)}</option>`).join('');sc.dataset.n=S.config.libraries.length}
   const bp=$('#bulkPreset'); if(bp.dataset.n!=names.join()){bp.innerHTML='<option value="">Set preset for selected…</option>'+names.map(n=>`<option>${esc(n)}</option>`).join('');bp.dataset.n=names.join()}
 }
-async function loadRecs(){recs=await api('/api/recommend?scope='+encodeURIComponent($('#scope').value));heldTotal=recs.reduce((a,r)=>a+(r.held||0),0);renderRecs()}
+async function loadRecs(){recs=await api('/api/recommend?scope='+encodeURIComponent($('#scope').value));heldTotal=recs.reduce((a,r)=>a+(r.held||0),0);renderRecs();
+  if(!suAsked&&!S.config.setup_done&&recs.length&&!S.scan?.running){suAsked=true;openSetup()}}
 async function restore(key){if(!confirm('Put the original files back and delete the encoded versions?'))return;const r=await api('/api/originals/restore',{key});if(!r.error)toast((r.restored+' files restored'));loadRecs()}
 async function preview(p){const r=await api('/api/preview',{path:p});if(r.error)return;prevWas=true;
   $('#pvTitle').textContent=p.split(/[\\/]/).pop();$('#pvSub').textContent='';$('#pvView').style.display='none';$('#pvWait').style.display='block';
@@ -343,6 +356,103 @@ function renderPresets(){
     c.querySelectorAll('input,select').forEach(x=>x.addEventListener('change',markDirty));
   });
 }
+const CATS=[['Movies','Most films',['Movies HD','Movies SD']],['TV dramas','Everyday dramas and shows',['Live Action TV']],
+ ['Big-budget TV','Sci-fi, fantasy, action and war shows',['Cinematic TV']],['Comedies & kids',"Sitcoms, comedies and kids' shows",['Sitcom']],
+ ['Cartoons','Western cartoons',['Cartoons HD','Cartoons SD']],['Anime','Japanese animation',['Anime']],['3D animated films','Pixar-style movies',['CG Animation']],
+ ['Documentaries','Nature, history, science',['Documentary']],['True crime','True crime and interview documentaries',['True Crime']],
+ ['Reality, talk & game shows','Also news and stand-up',['Talk & Reality']],['Sports','Games and matches',['Sports']],['Concerts','Concert films',['Concerts']],
+ ['Horror','Horror and other dark films',['Dark & Moody']],['Classic films','Older films with film grain',['Classic Film']],['Lectures & courses','Talks, tutorials, classes',['Lectures']]];
+const LV=[null,['Background','On while I\'m doing something else'],['Phone or tablet','I mostly watch this on a small screen'],['TV, not picky','On the TV, it just needs to look fine'],
+ ['TV, sharp','On the TV and I want it crisp'],['Best it can be','Big screen, I\'ll notice the difference']];
+const LVOUT=lv=>[null,'480p · smallest files','720p · small files','720p','1080p',SU.a.tv4k?'4K'+(SU.a.hdr?' with HDR':'')+' · biggest files':'1080p · high quality'][lv];
+const EASY=['Cartoons HD','Cartoons SD','Anime','Sitcom','Lectures','Talk & Reality'],HARD={'Sports':1.4,'Documentary':1.15,'Concerts':1.15,'Classic Film':1.15,'Dark & Moody':1.15,'Cinematic TV':1.15};
+let SU={};
+function lvOf(p){const h=p.max_height;return h>=2160?5:h>=1080?(p.cq<=22?5:4):h>=720?(p.cq>=28?2:3):1}
+function edited(n){const p=S.config.presets[n],r=(S.config.setup_presets||{})[n]||(S.defaultPresetValues||{})[n];if(!p||!r)return false;
+  return ['max_height','cq','audio','hdr_to_sdr','ten_bit','denoise','burn_subs'].some(k=>(p[k]??null)!=(r[k]??null))||JSON.stringify(p.caps)!=JSON.stringify(r.caps)}
+function buildPreset(n,lv,old){let [h,cq,caps]={1:[480,30,{480:1.2}],2:[720,28,{720:2,480:1.2}],3:[720,26,{720:3,480:1.5}],4:[1080,25,{1080:5,720:3,480:1.5}],5:[1080,22,{1080:8,720:4,480:2}]}[lv];
+  caps={...caps};if(lv==5&&SU.a.tv4k){h=2160;caps[2160]=16}if(/ SD$/.test(n))h=Math.min(h,480);
+  const f=EASY.includes(n)?0.7:HARD[n]||1;cq+=EASY.includes(n)?2:HARD[n]?-1:0;for(const t in caps)caps[t]=Math.max(0.5,Math.round(caps[t]*f*2)/2);
+  const need=n=='Concerts'?1:0,s=SU.a.sound,sur=n!='Lectures'&&((s=='surround'&&lv>=4-need)||(s=='soundbar'&&lv>=5-need));
+  return {...old,desc:(S.presetDescs||{})[n]??old.desc,max_height:h,cq:Math.max(18,Math.min(34,cq)),caps,audio:sur?'surround':'stereo',hdr_to_sdr:!(lv==5&&SU.a.tv4k&&SU.a.hdr)}}
+function catOf(n){return CATS.findIndex(c=>c[2].includes(n))}
+async function openSetup(){
+  SU={a:JSON.parse(JSON.stringify(S.config.setup_answers||{})),keep:new Set(),touched:new Set(),keepOver:true,place:{},i:0,recs:await api('/api/recommend?scope=')};
+  SU.a.sound??='tv';SU.a.lv??={};SU.count={};SU.recs.forEach(r=>SU.count[r.preset]=(SU.count[r.preset]||0)+1);
+  CATS.forEach(([c,,ps])=>{const p=S.config.presets[ps[0]];if(SU.a.lv[c]==null)SU.a.lv[c]=p?lvOf(p):3});
+  SU.unplaced=SU.recs.filter(r=>!r.source&&!(r.key in S.config.overrides));
+  if(S.config.setup_done)CATS.forEach(c=>c[2].forEach(n=>{if(edited(n))SU.keep.add(n)}));
+  SU.steps=[...(S.config.setup_done?['warn']:[]),'devices','levels',...(SU.unplaced.length?['unplaced']:[]),'done'];
+  $('#su').classList.add('on');suRender()}
+function suRender(){const st=SU.steps[SU.i],B=$('#suBody');$('#suStep').textContent=`Step ${SU.i+1} of ${SU.steps.length}`;$('#suBack').style.visibility=SU.i?'visible':'hidden';
+  $('#suNext').textContent=st=='done'?'Done':SU.steps[SU.i+1]=='done'?'Build my presets':'Next';
+  if(st=='warn'){$('#suTitle').textContent='Run setup again';const ps=CATS.flatMap(c=>c[2]).filter(n=>S.config.presets[n]);
+    B.innerHTML=`<p class="warn" style="margin-top:0">This will set new presets for every kind of video, based on your answers.</p>
+     <p class="dim">Tick any preset you want left exactly as it is. The ones you've changed by hand since the last setup are already ticked.</p>
+     <div style="columns:2;margin:10px 0">${ps.map(n=>`<label style="display:block;margin:3px 0"><input type="checkbox" class="sk" data-n="${esc(n)}" ${SU.keep.has(n)?'checked':''}> ${esc(n)}${edited(n)?' <span class="dim" style="font-size:12px">(edited)</span>':''}</label>`).join('')}</div>
+     <label class="choice"><input type="checkbox" id="suOver" ${SU.keepOver?'checked':''}> Keep the presets I picked for individual shows<span>Choices you made from the dropdown on the Recommendations tab.</span></label>`;
+    B.querySelectorAll('.sk').forEach(x=>x.onchange=()=>x.checked?SU.keep.add(x.dataset.n):SU.keep.delete(x.dataset.n));$('#suOver').onchange=e=>SU.keepOver=e.target.checked}
+  if(st=='devices'){$('#suTitle').textContent=S.config.setup_done?'How you watch':'Welcome! A few questions about how you watch';
+    B.innerHTML=`<p class="dim" style="margin-top:0">Reclaimer builds its presets from your answers. Nothing changes until the last step, and you can run this again anytime from the Presets tab.</p>
+     <h4>Your TV</h4>
+     <label class="choice"><input type="checkbox" id="su4k" ${SU.a.tv4k?'checked':''}> I have a 4K TV<span>Lets anything you rate "Best it can be" stay in 4K. Without one, 4K files are brought down to 1080p, which looks the same on a 1080p TV.</span></label>
+     <label class="choice" id="suHdrRow" style="${SU.a.tv4k?'':'opacity:.45'}"><input type="checkbox" id="suHdr" ${SU.a.hdr?'checked':''} ${SU.a.tv4k?'':'disabled'}> …and it shows HDR<span>Keeps HDR on things you rate "Best it can be". Phones and older TVs will then need Plex to convert it while playing, which works but works the server harder.</span></label>
+     <h4>Your sound</h4>${[['tv','TV speakers or headphones','Stereo everywhere: smallest, and it\'s all those can play.'],['soundbar','A soundbar','Keeps surround sound only on things you rate "Best it can be" (concerts from "TV, sharp" up).'],
+       ['surround','A surround system (5.1 or more)','Keeps surround sound on things you rate "TV, sharp" or better (concerts from "TV, not picky" up).']].map(([v,t,d])=>`<label class="choice"><input type="radio" name="suS" value="${v}" ${SU.a.sound==v?'checked':''}> ${t}<span>${d}</span></label>`).join('')}`;
+    $('#su4k').onchange=e=>{SU.a.tv4k=e.target.checked;if(!SU.a.tv4k)SU.a.hdr=false;suRender()};$('#suHdr').onchange=e=>SU.a.hdr=e.target.checked;
+    B.querySelectorAll('[name=suS]').forEach(x=>x.onchange=()=>SU.a.sound=x.value)}
+  if(st=='levels'){$('#suTitle').textContent='How much does each kind of video matter to you?';
+    const n=c=>c[2].reduce((a,p)=>a+(SU.count[p]||0),0),have=CATS.filter(c=>n(c)),none=CATS.filter(c=>!n(c));
+    const row=c=>`<div class="cat"><div class="cn"><b>${esc(c[0])}</b> <span class="dim" style="font-size:12px">${esc(c[1])}${n(c)?` · ${n(c)} in your library`:''}</span>${c[2].some(p=>SU.keep.has(p))?' <span class="tag">kept as is</span>':''}</div>
+      <div class="lvl" data-c="${esc(c[0])}">${[1,2,3,4,5].map(l=>`<button data-l="${l}" class="${SU.a.lv[c[0]]==l?'on':''}" title="${LV[l][0]}: ${LV[l][1]}">${l}</button>`).join('')}</div>
+      <div class="cm">${LV[SU.a.lv[c[0]]][0]} · ${LVOUT(SU.a.lv[c[0]])}</div></div>`;
+    B.innerHTML=`<p class="dim" style="margin-top:0">Rate each one by where you watch it and how much you'd notice:</p>
+     <div class="legend">${[1,2,3,4,5].map(l=>`<b>${l} · ${LV[l][0]}</b><span class="dim">${LV[l][1]} <i>(${LVOUT(l)})</i></span>`).join('')}</div>
+     ${have.map(row).join('')}${none.length?`<details style="margin-top:10px"><summary class="dim">Kinds you don't have yet (${none.length})</summary>${none.map(row).join('')}</details>`:''}`;
+    B.querySelectorAll('.lvl button').forEach(x=>x.onclick=()=>{SU.a.lv[x.parentNode.dataset.c]=+x.dataset.l;const o=B.querySelector('details')?.open;suRender();if(o)B.querySelector('details').open=true})}
+  if(st=='unplaced'){$('#suTitle').textContent="We couldn't place these, help me out";
+    B.innerHTML=`<p class="dim" style="margin-top:0">These have no genres Reclaimer recognises (often no genres at all: no .nfo file, and your media server didn't have any either). Pick what each one is, or leave it on its library's default. Your picks stick through future scans.</p>
+     <div class="intro" style="padding:10px 12px;margin-bottom:10px">
+      <label><input type="checkbox" id="suOnline" ${S.config.online_lookup?'checked':''}> <b>Suggest from online databases</b></label>
+      <div class="hint" style="margin:2px 0 0 22px">Looks up these titles on TVmaze (TV shows, no account needed) and TMDB (if you add a key). Sends only their names and database ids. Suggestions are filled in below for you to check; nothing is changed until you finish.</div>
+      <div style="margin:8px 0 0 22px;font-size:13px">TMDB key <span class="dim">(optional, also covers movies)</span> <input type="text" id="suTmdb" value="${esc(S.config.tmdb_key||'')}" placeholder="paste your API key" style="width:260px">
+       <span class="hint" style="margin:0;display:inline">free at themoviedb.org → Settings → API</span></div>
+      <div id="suProg" class="dim" style="margin:8px 0 0 22px;font-size:12px"></div></div>
+     ${SU.unplaced.map(r=>`<div class="cat"><div class="cn"><b>${esc(r.name)}</b> <span class="dim" style="font-size:12px">${r.type=='tv'?'TV':'movie'} · ${r.genres.length?'genres: '+esc(r.genres.join(', ')):'no genres found'}</span>
+      <span class="sg ok" data-k="${esc(r.key)}" style="font-size:12px">${SU.sug?.[r.key]?'suggested from '+esc(SU.sug[r.key].source):''}</span></div>
+      <select class="up" data-k="${esc(r.key)}"><option value="">Library default (${esc(r.preset)})</option>${CATS.map((c,i)=>`<option value="${i}" ${SU.place[r.key]==i?'selected':''}>${esc(c[0])}</option>`).join('')}</select></div>`).join('')}`;
+    B.querySelectorAll('.up').forEach(x=>x.onchange=()=>{SU.touched.add(x.dataset.k);if(x.value==='')delete SU.place[x.dataset.k];else SU.place[x.dataset.k]=+x.value});
+    const cfg=async()=>{await api('/api/config',{online_lookup:$('#suOnline').checked,tmdb_key:$('#suTmdb').value.trim()});S=await api('/api/state');suSuggest()};
+    $('#suOnline').onchange=cfg;$('#suTmdb').onchange=cfg;suSuggest()}
+  if(st=='done'){$('#suTitle').textContent='Your presets are ready';B.innerHTML='<p class="dim">Working out what this saves…</p>';suApply()}}
+async function suSuggest(){                         // fill in best guesses, a few at a time so progress shows
+  const run=SU.sugRun=(SU.sugRun||0)+1,keys=SU.unplaced.map(r=>r.key),on=S.config.online_lookup;SU.sug=SU.sug||{};let found=0;
+  for(let i=0;i<keys.length;i+=on?8:200){if(run!=SU.sugRun||SU.steps[SU.i]!='unplaced')return;
+    const p=$('#suProg');if(p)p.textContent=`${on?'Looking up':'Checking'} ${Math.min(i+(on?8:200),keys.length)} of ${keys.length}…`;
+    const r=await api('/api/suggest',{keys:keys.slice(i,i+(on?8:200))});if(r.error)return;
+    for(const [k,v] of Object.entries(r)){const ci=catOf(v.preset);if(ci<0)continue;SU.sug[k]=v;found++;
+      if(!SU.touched.has(k)){SU.place[k]=ci;const sel=document.querySelector(`.up[data-k="${CSS.escape(k)}"]`);if(sel)sel.value=ci}
+      const t=document.querySelector(`.sg[data-k="${CSS.escape(k)}"]`);if(t)t.textContent='suggested from '+v.source}}
+  const p=$('#suProg');if(p)p.textContent=`${Object.keys(SU.sug).length} of ${keys.length} have a suggestion. Check them before you go on.`+(on?'':' Turn on online suggestions to look up the rest.')}
+async function suApply(){const P=JSON.parse(JSON.stringify(S.config.presets)),made={};
+  CATS.forEach(c=>c[2].forEach(n=>{if(P[n]&&!SU.keep.has(n))P[n]=made[n]=buildPreset(n,SU.a.lv[c[0]],P[n])}));
+  const ov=SU.keepOver?{...S.config.overrides}:{};
+  for(const [k,ci] of Object.entries(SU.place)){const r=SU.recs.find(x=>x.key==k),ps=CATS[ci][2],maxh=Math.max(...r.files.map(f=>+f.res.split('x')[1]||0));
+    ov[k]=ps.length>1&&maxh<=576&&P[ps[1]]?ps[1]:ps[0]}
+  const r=await api('/api/config',{presets:P,overrides:ov,setup_done:true,setup_presets:{...(S.config.setup_presets||{}),...made},setup_answers:SU.a});if(r.error)return;
+  S=await api('/api/state');renderPresets();loadRecs();const A=await api('/api/recommend?scope=');
+  const live=A.filter(x=>!x.protected),size=live.reduce((a,x)=>a+x.size,0),est=live.reduce((a,x)=>a+x.est,0);
+  const ex=c=>A.filter(x=>c[2].includes(x.preset)).flatMap(x=>x.files).filter(f=>f.action=='encode').sort((a,b)=>b.size-a.size)[0];
+  const cats=CATS.filter(c=>A.some(x=>c[2].includes(x.preset)));
+  $('#suBody').innerHTML=`<div class="cards" style="margin:0 0 14px"><div class="card"><b>${gb(size)}</b><span>your library now</span></div><div class="card"><b>${gb(est)}</b><span>after Reclaimer, roughly</span></div>
+    <div class="card"><b class="ok">${gb(size-est)}</b><span>saved (${size?Math.round(100*(size-est)/size):0}%)</span></div></div>
+    <p class="dim">Nothing has been encoded yet. Queue things from the Recommendations tab when you're ready. Want to see what a choice looks like first? Preview one of your own files:</p>
+    ${cats.map(c=>{const f=ex(c),p=S.config.presets[c[2][0]];return `<div class="cat"><div class="cn"><b>${esc(c[0])}</b> <span class="dim" style="font-size:12px">${c[2].some(n=>SU.keep.has(n))?'kept as is':`${LV[SU.a.lv[c[0]]][0]} · ${LVOUT(SU.a.lv[c[0]])}`}${p?' · '+(AUDIO[p.audio]?.[0]||p.audio):''}</span></div>
+      ${f?`<button class="sp" data-p="${esc(f.path)}">Preview</button>`:'<span class="dim" style="font-size:12px">nothing to encode</span>'}</div>`}).join('')}`;
+  $('#suBody').querySelectorAll('.sp').forEach(x=>x.onclick=()=>preview(x.dataset.p))}
+$('#suNext').onclick=()=>{if(SU.steps[SU.i]=='done'){$('#su').classList.remove('on');toast('setup saved');return}SU.i++;suRender()};
+$('#suBack').onclick=()=>{if(SU.i){SU.i--;suRender()}};$('#suClose').onclick=()=>$('#su').classList.remove('on');$('#runSetup').onclick=openSetup;
+let suAsked=false;
 function markDirty(){$('#pDirty').textContent='Unsaved changes'}
 function readPresets(){const out={};document.querySelectorAll('.pcard').forEach(c=>{const caps={};c.querySelectorAll('.cap').forEach(i=>{if(i.value)caps[i.dataset.t]=+i.value});
   out[c.dataset.n]={desc:c.querySelector('.pd').value.trim(),max_height:+c.querySelector('.mh').value,caps,cq:52-(+c.querySelector('.cq').value),audio:c.querySelector('.au').value,
@@ -358,7 +468,7 @@ function renderSettings(){
   $('#encoder').innerHTML=S.encoders.map(e=>`<option ${e==c.encoder?'selected':''}>${e}</option>`).join('');
   $('#originals').value=c.originals;$('#minSave').value=c.min_savings_percent;$('#verify').value=c.verify||'full';$('#showRule').value=c.show_rule;$('#burnLang').value=c.burn_subs_lang||'eng';
   $('#libs').innerHTML=c.libraries.map(l=>libRow(l)).join('');bindLibs();
-  $('#winOn').checked=!!c.window.enabled;$('#winStart').value=c.window.start;$('#winEnd').value=c.window.end;$('#pauseStream').checked=!!c.pause_when_streaming;$('#autoMode').checked=!!c.auto_mode;$('#autoInt').value=c.auto_interval_min;$('#notify').checked=c.notify!==false;
+  $('#winOn').checked=!!c.window.enabled;$('#winStart').value=c.window.start;$('#winEnd').value=c.window.end;$('#pauseStream').checked=!!c.pause_when_streaming;$('#autoMode').checked=!!c.auto_mode;$('#autoInt').value=c.auto_interval_min;$('#notify').checked=c.notify!==false;$('#port').value=c.port||36597;
   $('#langOn').checked=!!c.audio_lang_filter;$('#langDefault').checked=c.audio_keep_default!==false;$('#langUnknown').checked=c.audio_keep_unknown!==false;loadLangs();
   $('#sonUrl').value=c.sonarr_url||'';$('#sonKey').value=c.sonarr_key||'';$('#radUrl').value=c.radarr_url||'';$('#radKey').value=c.radarr_key||'';
   $('#arrGuard').checked=c.arr_guard!==false;$('#arrRescan').checked=c.arr_rescan!==false;
@@ -405,7 +515,7 @@ function bindLibs(){document.querySelectorAll('#libs .del').forEach(b=>b.onclick
 $('#addLib').onclick=()=>{$('#libs').insertAdjacentHTML('beforeend',libRow({path:'',type:'movies',preset:'Movies HD'}));bindLibs()};
 $('#saveSettings').onclick=async()=>{const libraries=[...document.querySelectorAll('#libs .row')].map(r=>({path:r.querySelector('.lp').value.trim(),type:r.querySelector('.lt').value,preset:r.querySelector('.lpr').value})).filter(l=>l.path);
   await api('/api/config',{libraries,encoder:$('#encoder').value,originals:$('#originals').value,min_savings_percent:+$('#minSave').value,verify:$('#verify').value,show_rule:$('#showRule').value,burn_subs_lang:$('#burnLang').value.trim()||'eng',
-    window:{enabled:$('#winOn').checked,start:+$('#winStart').value,end:+$('#winEnd').value},pause_when_streaming:$('#pauseStream').checked,auto_mode:$('#autoMode').checked,auto_interval_min:Math.max(5,+$('#autoInt').value||30),notify:$('#notify').checked,
+    window:{enabled:$('#winOn').checked,start:+$('#winStart').value,end:+$('#winEnd').value},pause_when_streaming:$('#pauseStream').checked,auto_mode:$('#autoMode').checked,auto_interval_min:Math.max(5,+$('#autoInt').value||30),notify:$('#notify').checked,port:Math.min(65535,Math.max(1024,+$('#port').value||36597)),
     audio_lang_filter:$('#langOn').checked,audio_keep_default:$('#langDefault').checked,audio_keep_unknown:$('#langUnknown').checked,
     audio_keep_langs:document.querySelectorAll('#langBody .lk').length?[...document.querySelectorAll('#langBody .lk:checked')].map(i=>i.value):S.config.audio_keep_langs,
     sonarr_url:$('#sonUrl').value.trim(),sonarr_key:$('#sonKey').value.trim(),radarr_url:$('#radUrl').value.trim(),radarr_key:$('#radKey').value.trim(),

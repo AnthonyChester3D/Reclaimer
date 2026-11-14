@@ -15,7 +15,7 @@ Or just double-click **start.bat**: it installs both with winget if they're miss
 python reclaimer.py
 ```
 
-That opens `http://localhost:8765` in your browser. Reclaimer then lives in the **system tray** next to the clock, with no console window (start.bat installs the small tray helper, `pystray`, the first time):
+That opens `http://localhost:36597` in your browser. Reclaimer then lives in the **system tray** next to the clock, with no console window (start.bat installs the small tray helper, `pystray`, the first time):
 
 - click the icon to open the page; hover it to see what it's doing (blue = idle, green = encoding)
 - right-click for Start queue / Stop after current file, **Start with Windows**, and Quit
@@ -56,8 +56,9 @@ These are combined with the genres from any connected media server and matched a
 | Children, Kids | Sitcom | library default |
 | Science Fiction, Fantasy, Action, War, Western | Cinematic TV | library default |
 | Comedy, Soap | Sitcom | library default |
+| Everyday genres: Drama, Crime, Thriller, Mystery, Romance, Family, Adventure, Biography, History, Action, Sci-Fi, Comedy and similar | Live Action TV | Movies HD |
 
-Everything else uses the library's default preset (e.g. Movies HD for ordinary films, Live Action TV for dramas). **Classic Film** and **TV 4K** have no rule; assign them by hand to grainy older films and to shows you want to keep in 4K.
+Anything with no recognised genre uses the library's default preset and is listed in setup's "We couldn't place these" step. **Classic Film** and **TV 4K** have no rule; assign them by hand to grainy older films and to shows you want to keep in 4K.
 
 ## Media servers
 
@@ -168,3 +169,16 @@ A good encode typically scores 0.93-0.99, and the score is shown in the queue an
 Caps are in Mbps for normal frame rates; 50/60 fps video (sports, game footage) automatically gets 1.5× the cap. With CQ encoding most files land well under the cap; the cap only stops action scenes from ballooning. **10-bit** (on for Dark & Moody) prevents banding in dark scenes and smooth gradients; every modern device plays it. **Grain cleanup** (light on Classic Film) smooths film grain before encoding, which saves a lot of space on grainy films at the cost of some texture; use **preview** first. Both can be switched on for any preset in the Presets tab.
 
 The Presets tab shows each preset as a card with a plain-English description and summary tags. **Edit** opens its settings grouped into Picture, Sound and Subtitles; the CQ number is a *Smaller files ↔ Better picture* slider, and the caps live under *Size limits (advanced)*. Custom presets can be added based on an existing one and deleted; the built-in ones can be edited but not deleted.
+
+## Setup
+
+On first launch (after your libraries are scanned) Reclaimer asks a few questions and builds the presets from your answers:
+
+1. **Your TV and sound.** Whether you have a 4K TV, whether it shows HDR, and whether you listen through TV speakers or headphones, a soundbar, or a surround system.
+2. **How much each kind of video matters**, on a 1–5 scale: 1 Background (480p), 2 Phone or tablet (720p, small files), 3 TV, not picky (720p), 4 TV, sharp (1080p), 5 Best it can be (1080p at high quality, or 4K/HDR if you have the TV for it). Each preset still gets its own tuning on top: cartoons squeeze harder, sports get more room. Surround sound is kept only where your sound setup and rating call for it.
+3. **Shows it couldn't place.** Anything whose genres didn't match is listed so you can say what it is; your picks are saved as that show's own preset. Reclaimer pre-fills its best guesses for you to check:
+   - **Offline:** Japanese audio plus styled (ASS/SSA) subtitles in most episodes is suggested as Anime.
+   - **Online (opt-in):** tick *Suggest from online databases* to look titles up on **TVmaze** (TV, no account needed) and, if you paste a free **TMDB** API key, on TMDB (TV and movies). It uses the IMDb/TVDB/TMDB ids from .nfo files when there are any, otherwise the folder name and year. "Naruto: The Ocean Cut" also tries "Naruto". Only names and ids are sent; results are cached in `reclaimer_guesses.json`.
+4. **The result.** How much your choices save, with a Preview button per kind of video so you can check one of your own files first.
+
+Run it again anytime from **Run setup again** on the Presets tab. It warns first and lets you tick presets to keep as they are; ones you've edited by hand since the last setup are ticked for you.
