@@ -62,6 +62,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 #toast.bad{border-color:var(--bad);background:#3a1d1d;color:#ffd7d7;font-weight:600}
 #toast{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:6px;display:none}
 </style></head><body>
+<div id="upd" style="display:none;background:#16324f;border-bottom:1px solid var(--line);padding:8px 16px;font-size:13px"></div>
 <header><h1>Reclaim<span>er</span> <small id="appVer" class="dim" style="font-size:11px;font-weight:400"></small></h1>
 <nav><button class="on" data-t="recs">Recommendations</button><button data-t="queue">Queue</button><button data-t="cleanup">Cleanup</button><button data-t="health">Health</button><button data-t="presets">Presets</button><button data-t="settings">Settings</button></nav>
 <div class="grow"></div><div id="status" class="dim"></div></header>
@@ -169,6 +170,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <div class="bar"><label class="dim"><input type="checkbox" id="winOn"> only encode between</label> <input type="number" id="winStart" min="0" max="23"> and <input type="number" id="winEnd" min="0" max="23"> o'clock
   &nbsp; <label class="dim"><input type="checkbox" id="pauseStream"> pause while someone is watching (Plex, Jellyfin, Emby or Kodi)</label></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="autoMode"> <b>auto mode</b>: rescan, queue and encode on its own every</label> <input type="number" id="autoInt" min="5"> minutes <span class="help" style="margin:0">(leave it running in the tray; new downloads get picked up)</span></div>
+ <div class="bar"><label class="dim"><input type="checkbox" id="updCheck"> check GitHub once a day for a newer version</label><button id="updNow">Check now</button></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="notify"> show a Windows notification when a batch finishes</label></div>
  <div class="bar"><label class="dim">Port <input type="number" id="port" min="1024" max="65535" style="width:90px"></label><span class="dim" style="font-size:12px">The page lives at http://localhost:<i>port</i>. Change it only if another program needs this one; takes effect after you restart Reclaimer. If it's taken, the next free port is used.</span></div>
  <div class="bar"><button id="saveSettings" class="pri">Save settings</button><span id="setMsg" class="dim"></span></div>
@@ -207,6 +209,7 @@ let favState='';
 function setFavicon(){const q=S.queue||{},st=q.current?'working':q.waiting?'paused':'idle';if(st!==favState){favState=st;$('#favicon').href='/favicon.svg?s='+st}}
 async function poll(){
   S=await api('/api/state');
+  renderUpdate();
   setFavicon();
   const sc=S.scan, q=S.queue;
   $('#status').textContent=sc.running?(sc.phase||`scanning ${sc.done}/${sc.total}…`):sc.error?'scan error: '+sc.error:q.running?`encoding (${q.items.filter(i=>i.status=='queued').length} queued)`:`${S.cached} files known`;
@@ -463,12 +466,23 @@ $('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return t
 $('#savePresets').onclick=async()=>{const presets=readPresets();for(const [n,p] of Object.entries(presets))if(!Object.keys(p.caps).length)return toast(`"${n}" needs at least one size limit (open Edit → Size limits)`,true);
   const r=await api('/api/config',{presets});if(r.error)return;toast('presets saved');$('#pDirty').textContent='';S=await api('/api/state');renderPresets();loadRecs()};
 
-function renderSettings(){if(S.appVersion)$('#appVer').textContent='v'+S.appVersion;
+let updHidden='';
+function renderUpdate(){const u=S.update||{},b=$('#upd');if(!u.newer||updHidden==u.latest){b.style.display='none';return}b.style.display='block';
+  const k=u.latest+(u.msg||'');if(b.dataset.k==k)return;b.dataset.k=k;
+  b.innerHTML=`<b>Reclaimer ${esc(u.latest)} is available</b> <span class="dim">(you have ${esc(S.appVersion)})</span>
+   ${S.frozen&&u.zip?`<button id="updGo" class="pri" ${u.busy?'disabled':''}>Update now</button>`:`<a href="${esc(u.url)}" target="_blank" style="color:var(--acc)">Download</a>`}
+   <details style="display:inline-block;margin-left:8px"><summary class="dim">What's new</summary><pre style="white-space:pre-wrap;max-height:240px;overflow:auto;font-size:12px">${esc(u.notes)}</pre></details>
+   <span class="warn">${esc(u.msg||'')}</span><button id="updX" style="float:right" title="hide until the next version">✕</button>`;
+  $('#updX').onclick=()=>{updHidden=u.latest;renderUpdate()};
+  const g=$('#updGo');if(g)g.onclick=async()=>{if(!confirm(`Update to ${u.latest}? Reclaimer downloads it, checks it, and restarts. Your settings stay as they are.`))return;
+    await api('/api/update/install',{});toast('updating… the page reconnects when it\'s back');setTimeout(()=>location.reload(),15000)}}
+function renderSettings(){$('#updNow').onclick=async()=>{const r=await api('/api/update/check',{});if(r.error)return;S.update=r;renderUpdate();toast(r.newer?`version ${r.latest} is available`:`you're up to date (${S.appVersion})`)};if(S.appVersion)$('#appVer').textContent='v'+S.appVersion;
   const c=S.config;
-  $('#encoder').innerHTML=S.encoders.map(e=>`<option ${e==c.encoder?'selected':''}>${e}</option>`).join('');
+  $('#encoder').innerHTML=S.encoders.map(e=>`<option value="${e.id}" ${e.id==c.encoder?'selected':''} ${e.ok||e.id==c.encoder?'':'disabled'}>${esc(e.name)}${e.ok?'':' (not available on this PC)'}</option>`).join('');
+  if(S.encoderNote&&!window.encNoted){window.encNoted=1;toast(S.encoderNote)}
   $('#originals').value=c.originals;$('#minSave').value=c.min_savings_percent;$('#verify').value=c.verify||'full';$('#showRule').value=c.show_rule;$('#burnLang').value=c.burn_subs_lang||'eng';
   $('#libs').innerHTML=c.libraries.map(l=>libRow(l)).join('');bindLibs();
-  $('#winOn').checked=!!c.window.enabled;$('#winStart').value=c.window.start;$('#winEnd').value=c.window.end;$('#pauseStream').checked=!!c.pause_when_streaming;$('#autoMode').checked=!!c.auto_mode;$('#autoInt').value=c.auto_interval_min;$('#notify').checked=c.notify!==false;$('#port').value=c.port||36597;
+  $('#winOn').checked=!!c.window.enabled;$('#winStart').value=c.window.start;$('#winEnd').value=c.window.end;$('#pauseStream').checked=!!c.pause_when_streaming;$('#autoMode').checked=!!c.auto_mode;$('#autoInt').value=c.auto_interval_min;$('#notify').checked=c.notify!==false;$('#updCheck').checked=c.update_check!==false;$('#port').value=c.port||36597;
   $('#langOn').checked=!!c.audio_lang_filter;$('#langDefault').checked=c.audio_keep_default!==false;$('#langUnknown').checked=c.audio_keep_unknown!==false;loadLangs();
   $('#sonUrl').value=c.sonarr_url||'';$('#sonKey').value=c.sonarr_key||'';$('#radUrl').value=c.radarr_url||'';$('#radKey').value=c.radarr_key||'';
   $('#arrGuard').checked=c.arr_guard!==false;$('#arrRescan').checked=c.arr_rescan!==false;
@@ -515,7 +529,7 @@ function bindLibs(){document.querySelectorAll('#libs .del').forEach(b=>b.onclick
 $('#addLib').onclick=()=>{$('#libs').insertAdjacentHTML('beforeend',libRow({path:'',type:'movies',preset:'Movies HD'}));bindLibs()};
 $('#saveSettings').onclick=async()=>{const libraries=[...document.querySelectorAll('#libs .row')].map(r=>({path:r.querySelector('.lp').value.trim(),type:r.querySelector('.lt').value,preset:r.querySelector('.lpr').value})).filter(l=>l.path);
   await api('/api/config',{libraries,encoder:$('#encoder').value,originals:$('#originals').value,min_savings_percent:+$('#minSave').value,verify:$('#verify').value,show_rule:$('#showRule').value,burn_subs_lang:$('#burnLang').value.trim()||'eng',
-    window:{enabled:$('#winOn').checked,start:+$('#winStart').value,end:+$('#winEnd').value},pause_when_streaming:$('#pauseStream').checked,auto_mode:$('#autoMode').checked,auto_interval_min:Math.max(5,+$('#autoInt').value||30),notify:$('#notify').checked,port:Math.min(65535,Math.max(1024,+$('#port').value||36597)),
+    window:{enabled:$('#winOn').checked,start:+$('#winStart').value,end:+$('#winEnd').value},pause_when_streaming:$('#pauseStream').checked,auto_mode:$('#autoMode').checked,auto_interval_min:Math.max(5,+$('#autoInt').value||30),notify:$('#notify').checked,update_check:$('#updCheck').checked,port:Math.min(65535,Math.max(1024,+$('#port').value||36597)),
     audio_lang_filter:$('#langOn').checked,audio_keep_default:$('#langDefault').checked,audio_keep_unknown:$('#langUnknown').checked,
     audio_keep_langs:document.querySelectorAll('#langBody .lk').length?[...document.querySelectorAll('#langBody .lk:checked')].map(i=>i.value):S.config.audio_keep_langs,
     sonarr_url:$('#sonUrl').value.trim(),sonarr_key:$('#sonKey').value.trim(),radarr_url:$('#radUrl').value.trim(),radarr_key:$('#radKey').value.trim(),

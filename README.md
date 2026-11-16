@@ -4,12 +4,14 @@ Finds what got lost in a Plex, Jellyfin, Emby or Kodi media library (the 4K epis
 
 ## Download
 
-Grab `Reclaimer-v0.9.0-windows.zip` from the **Releases** page, unzip it into a folder of its own (settings and logs are kept next to it), and run `reclaimer.exe`. You'll also need ffmpeg: `winget install Gyan.FFmpeg`, or Reclaimer shows you how on first launch.
+Grab `Reclaimer-v0.9.1-windows.zip` from the **Releases** page, unzip it into a folder of its own (settings and logs are kept next to it), and run `reclaimer.exe`. You'll also need ffmpeg: `winget install Gyan.FFmpeg`, or Reclaimer shows you how on first launch.
 
 - **"Windows protected your PC"**: the exe isn't code-signed. Click **More info → Run anyway**.
 - **Antivirus complains**: one-file Python apps sometimes get flagged by mistake. Run from source instead (below).
 
-To build a release yourself: bump `APP_VERSION` in `reclaimer.py` and run `make_release.bat`.
+**Updates** (from 0.9.1 on): once a day Reclaimer asks GitHub for the latest release and shows a banner when there's a newer one. With the exe, **Update now** downloads it, checks it against its `.sha256`, swaps the exe and restarts, keeping your settings. Running from source, the banner links to the download. Turn the daily check off in Settings.
+
+To build a release yourself: bump `APP_VERSION` in `reclaimer.py`, run `make_release.bat`, and attach both the zip and its `.sha256` to the GitHub release (the updater uses the checksum).
 
 ## Setup (Windows main PC) (from source)
 
@@ -99,6 +101,10 @@ Settings → Audio languages lists every audio language in your scanned librarie
 
 When the video is already within the preset's limits, the file is only repacked without the dropped tracks. That takes seconds and the video is untouched.
 
+## Graphics cards
+
+On every start Reclaimer does a tiny test encode with each encoder to see which ones actually work on this PC, and picks the best that does: **NVIDIA** (NVENC, GTX 950 or newer), **Intel** (Quick Sync), **AMD** (AMF), or the **processor** (x265: works everywhere, much slower). If the one in Settings stops working (new PC, new card), it switches and tells you. Encoders that don't work here are greyed out in Settings.
+
 ## What ffmpeg is for
 
 ffmpeg (with ffprobe) does all the actual video work: reading each file's details during a scan, and decoding, scaling, tone-mapping, burning subs, NVENC encoding, audio conversion and writing the files. Reclaimer decides what to do and runs it. Without ffmpeg it can't scan or encode at all. ffmpeg is free; if you ever pass ffmpeg.exe on to someone else, include its license (GPL) and a link to its source.
@@ -149,7 +155,7 @@ A good encode typically scores 0.93-0.99, and the score is shown in the queue an
 - Encodes go to a hidden temp file and only replace the original after a duration and audio-track check, and only if actually 15%+ smaller. Ctrl+C or **Cancel current** leaves the original untouched.
 - Originals are moved to `.reclaimer_originals` inside each library, with `.plexignore`/`.ignore`/`.nomedia` files so Plex ignores them. **No space is freed until you click Delete all** (or delete that folder). Each show/movie row has a **restore** link while its originals are held. Switch Settings → Originals to "delete" once you trust the results.
 - Every output carries a `RECLAIMER` tag so it's never encoded twice. Failed or rejected files are remembered (`reclaimer_state.json`); click "retry" next to them to try again.
-- `reclaimer_log.csv` has the history of every encode.
+- `reclaimer_log.csv` is the full history: every encode, Cleanup removal, restore, permanent delete, audio relabel, protect/unprotect, per-show preset pick and settings change (setting names only, never their values). It opens in Excel.
 
 ## Presets (defaults, editable in the GUI)
 

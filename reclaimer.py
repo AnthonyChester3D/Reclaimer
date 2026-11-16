@@ -91,7 +91,7 @@ DEFAULT_CONFIG = {
     "libraries": [],          # {"path": r"\\mynas\video\Movies", "type": "movies"|"tv", "preset": "Movies HD"}
     "presets": DEFAULT_PRESETS,
     "overrides": {},          # show/movie folder -> preset name
-    "encoder": "hevc_nvenc",  # hevc_nvenc | libx265
+    "encoder": "hevc_nvenc",  # hevc_nvenc (NVIDIA) | hevc_qsv (Intel) | hevc_amf (AMD) | libx265 (CPU); checked at startup
     "hwaccel_decode": "auto",
     "tonemap": "auto",        # auto | libplacebo | zscale
     "originals": "move",      # move | delete
@@ -122,6 +122,7 @@ DEFAULT_CONFIG = {
     "verify_min_ssim": 0.80,  # a sampled picture scoring below this against the original fails the encode
     "protected": [],          # show/movie folders or files that are never touched
     "port": 36597,            # where the page lives: http://localhost:<port> (restart to apply)
+    "update_check": True,     # once a day, ask GitHub whether a newer release is out
     "online_lookup": False,   # look up genres on TVmaze/TMDB for things setup couldn't place (sends their names)
     "tmdb_key": "",           # optional free TMDB key: better matches, and movies too
     "setup_done": False,      # the setup questions have been answered
@@ -563,6 +564,7 @@ def relabel_track(path, idx, lang):
         CACHE[path] = {"size": nst.st_size, "mtime": nst.st_mtime, "info": info}
         save_cache()
     print(f"Relabelled audio track {n + 1} of {src.name} as {LANG_NAMES.get(lang, lang)}")
+    log_event(path, "relabelled", f"audio track {n + 1} is now {LANG_NAMES.get(lang, lang)}")
     return {"ok": True, "name": LANG_NAMES.get(lang, lang)}
 
 def plan_audio(info, mode):
@@ -1267,6 +1269,12 @@ def build_cmd(info, plan, p, out, hwaccel=True, clip=None, preview=False):
     k = int(plan["cap"] / 1000)
     if plan.get("video_copy"):
         cmd += ["-c:v:0", "copy"]
+    elif enc == "hevc_qsv":
+        cmd += ["-c:v:0", "hevc_qsv", "-preset", "slower", "-global_quality", str(p["cq"]), "-look_ahead", "1",
+                "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-profile:v", "main10" if ten_bit else "main"]
+    elif enc == "hevc_amf":
+        cmd += ["-c:v:0", "hevc_amf", "-quality", "quality", "-rc", "qvbr", "-qvbr_quality_level", str(max(1, min(51, 52 - p["cq"]))),
+                "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-profile:v", "main10" if ten_bit else "main"]
     elif enc == "hevc_nvenc":
         cmd += ["-c:v:0", "hevc_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", str(p["cq"]), "-b:v", "0",
                 "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-spatial-aq", "1", "-temporal-aq", "1",
@@ -1326,6 +1334,10 @@ def display_codec():
     """Near-lossless H.264 for the comparison clips: every browser plays it, and it hides nothing."""
     if CFG["encoder"] == "hevc_nvenc":
         return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "14", "-b:v", "0", "-pix_fmt", "yuv420p"]
+    if CFG["encoder"] == "hevc_qsv":
+        return ["-c:v", "h264_qsv", "-global_quality", "16", "-pix_fmt", "nv12"]
+    if CFG["encoder"] == "hevc_amf":
+        return ["-c:v", "h264_amf", "-rc", "cqp", "-qp_i", "14", "-qp_p", "14", "-pix_fmt", "nv12"]
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
 
 class PreviewCancelled(Exception):
@@ -1681,6 +1693,7 @@ def restore_originals(key):
             continue
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(p), str(dest))
+        log_event(str(dest), "restored", "original put back" if kind == "originals" else "put back from Cleanup")
         CACHE.pop(str(dest), None)
         STATE.pop(str(dest), None)
         n += 1
@@ -1698,10 +1711,20 @@ def delete_originals(lib_path=""):
     for lib in CFG["libraries"]:
         if lib_path and norm(lib["path"]) != norm(lib_path):
             continue
-        freed += sum(size for _, size, _ in held_files(lib))
+        files = list(held_files(lib))
+        for p, size, kind in files:
+            log_event(str(p), "deleted", "permanently deleted " + ("original (encoded version kept)" if kind == "originals" else "Cleanup item"), size)
+        freed += sum(size for _, size, _ in files)
         shutil.rmtree(held_root(lib, "originals"), ignore_errors=True)
         shutil.rmtree(held_root(lib, "removed"), ignore_errors=True)
     return freed
+
+def log_event(path, status, detail="", size=0):
+    """Record a change that isn't an encode, so reclaimer_log.csv is the full history."""
+    try:
+        log_row([time.strftime("%Y-%m-%d %H:%M"), path, status, detail, size, "0"])
+    except Exception as e:
+        print(f"couldn't write the log: {e}")
 
 def log_row(row):
     new = not LOG_PATH.exists()
@@ -1871,7 +1894,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send({"config": CFG, "scan": SCAN, "queue": QUEUE, "media": MEDIA, "preview": PREVIEW, "cached": len(CACHE),
                                   "arr": ARR, "verify": VERIFY, "junk": {"running": JUNK["running"], "msg": JUNK["msg"], "items": JUNK["items"],
                                                        "cats": {k: {"label": v[0], "default": v[1]} for k, v in JUNK_CATS.items()}},
-                                  "encoders": ["hevc_nvenc", "libx265"], "appVersion": APP_VERSION, "defaultPresets": list(DEFAULT_PRESETS), "defaultPresetValues": DEFAULT_PRESETS,
+                                  "encoders": [{"id": e, "name": n, "ok": e in WORKING_ENCODERS} for e, n in ENCODERS],
+                                  "encoderNote": ENCODER_NOTE["text"], "appVersion": APP_VERSION, "update": UPDATE, "frozen": bool(getattr(sys, "frozen", False)), "defaultPresets": list(DEFAULT_PRESETS), "defaultPresetValues": DEFAULT_PRESETS,
                                   "presetDescs": PRESET_DESCRIPTIONS})
         if path == "/api/recommend":
             with LOCK:
@@ -1905,21 +1929,36 @@ class Handler(BaseHTTPRequestHandler):
     def api_post(self, path, b):
         if path == "/api/config":
             AUTO.clear()
+            changed = [k for k in b if k in CFG and CFG.get(k) != b[k]]
             for k in ("libraries", "presets", "overrides", "encoder", "originals", "min_savings_percent", "show_rule", "tonemap",
                       "hwaccel_decode", "plex_url", "plex_token", "plex_rules", "plex_refresh", "jellyfin_url", "jellyfin_key",
                       "emby_url", "emby_key", "kodi_url", "kodi_user", "kodi_password", "burn_subs_lang",
                       "window", "pause_when_streaming", "auto_mode", "auto_interval_min", "protected",
                       "audio_lang_filter", "audio_keep_langs", "audio_keep_unknown", "audio_keep_default", "notify",
                       "sonarr_url", "sonarr_key", "radarr_url", "radarr_key", "arr_guard", "arr_rescan", "verify", "verify_min_ssim",
-                      "setup_done", "setup_presets", "setup_answers", "port", "online_lookup", "tmdb_key"):
+                      "setup_done", "setup_presets", "setup_answers", "port", "online_lookup", "tmdb_key", "update_check"):
                 if k in b:
                     CFG[k] = b[k]
             save_json(CONFIG_PATH, CFG)
+            nice = [k for k in changed if k not in ("setup_presets", "setup_answers")]
+            if nice:                                  # names only; values (tokens, keys) never go in the log
+                log_event("", "settings", "changed: " + ", ".join(nice))
             return {"ok": True}
         if path == "/api/languages":
             return language_summary()
         if path == "/api/language_items":
             return language_items(lang_code(b.get("lang")))
+        if path == "/api/update/check":
+            try:
+                check_update()
+            except Exception as e:
+                return {"error": f"couldn't reach GitHub: {e}"}
+            return UPDATE
+        if path == "/api/update/install":
+            if not UPDATE["busy"]:
+                UPDATE["busy"] = True
+                threading.Thread(target=install_update, daemon=True).start()
+            return {"ok": True}
         if path == "/api/recheck":
             if check_tools():
                 init_engine()
@@ -1928,6 +1967,7 @@ class Handler(BaseHTTPRequestHandler):
             keys = [k for k in CFG["protected"] if norm(k) != norm(b["key"])]
             CFG["protected"] = keys + ([b["key"]] if b.get("on") else [])
             save_json(CONFIG_PATH, CFG)
+            log_event(b["key"], "protected" if b.get("on") else "unprotected")
             return {"ok": True}
         if path == "/api/override":
             if b.get("preset"):
@@ -1935,6 +1975,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 CFG["overrides"].pop(b["key"], None)
             save_json(CONFIG_PATH, CFG)
+            log_event(b["key"], "preset", f"set to {b['preset']}" if b.get("preset") else "back to automatic")
             return {"ok": True}
         if path == "/api/media/sync":
             if MEDIA["running"]:
@@ -2062,9 +2103,38 @@ def check_tools():
     MISSING[:] = [t for t in ("ffmpeg", "ffprobe") if not shutil.which(t)]
     return not MISSING
 
+ENCODERS = [("hevc_nvenc", "NVIDIA graphics card (NVENC)"), ("hevc_qsv", "Intel graphics (Quick Sync)"),
+            ("hevc_amf", "AMD graphics card (AMF)"), ("libx265", "Processor only (works everywhere, much slower)")]
+WORKING_ENCODERS = []
+ENCODER_NOTE = {"text": ""}
+
+def test_encoders():
+    """Which encoders really work on this PC: a tiny test encode with each. Being in ffmpeg isn't enough;
+    NVENC needs an NVIDIA card (GTX 950 or newer), Quick Sync an Intel iGPU, AMF an AMD card, and current drivers."""
+    ok = []
+    for enc, _ in ENCODERS:
+        try:
+            r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=320x240:d=0.2", "-frames:v", "3",
+                                "-c:v", enc, "-f", "null", "-"], capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                ok.append(enc)
+        except Exception:
+            pass
+    return ok
+
 def init_engine():
     global FILTERS
     FILTERS = probe_filters()
+    WORKING_ENCODERS[:] = test_encoders()
+    print("encoders that work here:", ", ".join(WORKING_ENCODERS) or "none")
+    if WORKING_ENCODERS and CFG["encoder"] not in WORKING_ENCODERS:
+        old, CFG["encoder"] = CFG["encoder"], WORKING_ENCODERS[0]
+        save_json(CONFIG_PATH, CFG)
+        log_event("", "settings", f"encoder switched from {old} to {CFG['encoder']} (not available on this PC)")
+        names = dict(ENCODERS)
+        ENCODER_NOTE["text"] = (f"{names.get(old, old)} isn't available on this PC, so Reclaimer switched to "
+                                f"{names[CFG['encoder']]}. You can change this in Settings.")
+        print(ENCODER_NOTE["text"])
     if "zscale" not in FILTERS and "libplacebo" not in FILTERS:
         print("WARNING: this ffmpeg has no tone-mapping filter; HDR files will fail. Install the 'full' Gyan build.")
 
@@ -2072,7 +2142,7 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"   # on Windows, reuse would let two programs share one port silently
     daemon_threads = True
 
-APP_VERSION = "0.9.0"                            # the release number people see; bump it for each release
+APP_VERSION = "0.9.1"                            # the release number people see; bump it for each release
 VERSION = str(int(os.path.getmtime(sys.executable if getattr(sys, "frozen", False) else __file__)))
 
 def popup(text):
@@ -2165,6 +2235,75 @@ def shutdown_app():
         except Exception:
             pass
     threading.Timer(1.0, lambda: os._exit(0)).start()
+
+# ---------- updates ----------
+REPO = "AnthonyChester3D/Reclaimer"
+UPDATE = {"latest": "", "newer": False, "url": "", "notes": "", "zip": "", "sha": "", "checked": 0, "msg": "", "busy": False}
+
+def _ver(t):
+    return tuple(int(x) for x in re.findall(r"\d+", t or "")[:3])
+
+def check_update():
+    """Newest published release (pre-releases count: 0.9.x are pre-releases)."""
+    rels = _get_json(f"https://api.github.com/repos/{REPO}/releases?per_page=10", {"Accept": "application/vnd.github+json"})
+    rels = [r for r in rels if not r.get("draft")]
+    if not rels:
+        return
+    best = max(rels, key=lambda r: _ver(r.get("tag_name")))
+    assets = {a["name"]: a["browser_download_url"] for a in best.get("assets", [])}
+    zipname = next((n for n in assets if n.endswith("-windows.zip")), "")
+    UPDATE.update(latest=best["tag_name"].lstrip("v"), newer=_ver(best["tag_name"]) > _ver(APP_VERSION), url=best.get("html_url", ""),
+                  notes=(best.get("body") or "")[:4000], zip=assets.get(zipname, ""), sha=assets.get(zipname + ".sha256", ""),
+                  checked=time.time())
+
+def update_loop():
+    time.sleep(20)
+    while True:
+        if CFG.get("update_check", True):
+            try:
+                check_update()
+            except Exception as e:
+                print(f"update check failed: {e}")
+        time.sleep(24 * 3600)
+
+def install_update():
+    """Exe only: download the new release, check its SHA-256, swap the exe and restart into it.
+    A running exe can be renamed on Windows, so: current -> reclaimer.old.exe, new -> reclaimer.exe, start it, quit."""
+    import hashlib, zipfile
+    try:
+        if not getattr(sys, "frozen", False):
+            raise ValueError("you're running from source: download the new version from GitHub instead")
+        if QUEUE["running"]:
+            raise ValueError("wait for the queue to finish (or stop it) first")
+        if not UPDATE["zip"]:
+            raise ValueError("that release has no Windows download")
+        UPDATE["msg"] = "downloading…"
+        tmp = HERE / "reclaimer_update.zip"
+        with urlopen(Request(UPDATE["zip"], headers={"User-Agent": "Reclaimer"}), timeout=120) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f)
+        if UPDATE["sha"]:
+            with urlopen(Request(UPDATE["sha"], headers={"User-Agent": "Reclaimer"}), timeout=30) as r:
+                want = r.read().decode("ascii", "ignore").strip().split()[0].lower()
+            got = hashlib.sha256(tmp.read_bytes()).hexdigest()
+            if got != want:
+                tmp.unlink(missing_ok=True)
+                raise ValueError("the download didn't match its checksum, so it wasn't installed")
+        UPDATE["msg"] = "installing…"
+        exe, old, new = Path(sys.executable), HERE / "reclaimer.old.exe", HERE / "reclaimer.new.exe"
+        with zipfile.ZipFile(tmp) as z:
+            name = next(n for n in z.namelist() if n.lower().endswith("reclaimer.exe"))
+            new.write_bytes(z.read(name))
+        tmp.unlink(missing_ok=True)
+        old.unlink(missing_ok=True)
+        os.replace(exe, old)
+        os.replace(new, exe)
+        log_event(str(exe), "updated", f"{APP_VERSION} -> {UPDATE['latest']}")
+        subprocess.Popen([str(exe), "--no-browser"], cwd=str(HERE), close_fds=True)   # it takes over from this copy
+        UPDATE["msg"] = "restarting…"
+    except Exception as e:
+        UPDATE["msg"] = f"update failed: {e}"
+    finally:
+        UPDATE["busy"] = False
 
 # ---------- Sonarr / Radarr ----------
 def arr_request(app, path, body=None):
@@ -2809,6 +2948,11 @@ def main():
         print(f"{' and '.join(MISSING)} not found - the page in your browser explains how to get it.")
     srv, port = open_server(args.port or int(CFG.get("port") or DEFAULT_PORT), args.no_browser)
     threading.Thread(target=auto_loop, daemon=True).start()
+    threading.Thread(target=update_loop, daemon=True).start()
+    try:
+        (HERE / "reclaimer.old.exe").unlink(missing_ok=True)   # left over from an update
+    except OSError:
+        pass
     threading.Thread(target=watch_transcodes, daemon=True).start()
     url = f"http://localhost:{port}"
     if not args.no_browser:
