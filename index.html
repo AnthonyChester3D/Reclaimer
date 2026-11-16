@@ -376,7 +376,7 @@ const CATS=[['Movies','Most films',['Movies HD','Movies SD']],['TV dramas','Ever
  ['Horror','Horror and other dark films',['Dark & Moody']],['Classic films','Older films with film grain',['Classic Film']],['Lectures & courses','Talks, tutorials, classes',['Lectures']]];
 const LV=[null,['Background','On while I\'m doing something else'],['Phone or tablet','I mostly watch this on a small screen'],['TV, not picky','On the TV, it just needs to look fine'],
  ['TV, sharp','On the TV and I want it crisp'],['Best it can be','Big screen, I\'ll notice the difference']];
-const LVOUT=lv=>[null,'480p · smallest files','720p · small files','720p','1080p',SU.a.tv4k?'4K'+(SU.a.hdr?' with HDR':'')+' · biggest files':'1080p · high quality'][lv];
+const LVOUT=lv=>[null,'480p · smallest files','720p · small files','720p','1080p',SU.a.tv4k?'4K · biggest files':'1080p · high quality'][lv];
 const EASY=['Cartoons HD','Cartoons SD','Anime','Sitcom','Lectures','Talk & Reality'],HARD={'Sports':1.4,'Documentary':1.15,'Concerts':1.15,'Classic Film':1.15,'Dark & Moody':1.15,'Cinematic TV':1.15};
 // What each device can play directly. hevc/av1: video formats; hdr: shows HDR; ass: renders styled anime subtitles itself
 const DEV=[['TV boxes',[['roku_ultra22','Roku Ultra (2022 or newer)',{hevc:1,av1:1,hdr:1}],['roku','Other Roku 4K',{hevc:1,hdr:1}],['roku_old','Older Roku (HD only)',{}],
@@ -391,12 +391,12 @@ const DEV=[['TV boxes',[['roku_ultra22','Roku Ultra (2022 or newer)',{hevc:1,av1
 const DEVS=Object.fromEntries(DEV.flatMap(g=>g[1]).map(d=>[d[0],{name:d[1],...d[2]}]));
 function playback(ids){const d=ids.map(i=>DEVS[i]).filter(Boolean),all=k=>d.length>0&&d.every(x=>x[k]),hw=(S.av1Encoders||[]).length>0;
   const codec=all('av1')&&hw?'av1':all('hevc')?'hevc':d.length?'h264':'hevc';
-  return {codec,hdr:all('hdr'),ass:all('ass'),noHevc:d.filter(x=>!x.hevc).map(x=>x.name),av1No:d.filter(x=>!x.av1).map(x=>x.name),hw}}
+  return {codec,hdr:all('hdr'),anyHdr:d.some(x=>x.hdr),ass:all('ass'),noHevc:d.filter(x=>!x.hevc).map(x=>x.name),av1No:d.filter(x=>!x.av1).map(x=>x.name),hw}}
 function playbackText(ids){if(!ids.length)return '<span class="dim">Tick at least one device.</span>';const p=playback(ids);
   const fmt={hevc:'<b>HEVC</b>: small files, and everything you ticked plays it directly',h264:`<b>H.264</b>, so everything plays directly. ${esc(p.noHevc.join(', '))} can't play HEVC; files will be bigger than HEVC (about 40%). Untick it if you don't watch your library on it`,
     av1:'<b>AV1</b>: the smallest files, and everything you ticked plays it directly'}[p.codec];
   const extra=p.codec=='hevc'&&!p.av1No.length&&!p.hw?' (AV1 would be even smaller, but this PC\'s graphics card can\'t make it.)':p.codec=='hevc'&&p.av1No.length&&p.av1No.length<3?` (AV1 would be smaller, but ${esc(p.av1No.join(', '))} can't play it.)`:'';
-  return `Reclaimer will use ${fmt}.${extra}<br>${p.hdr?'All of these show HDR, so HDR can be kept.':'Not all of these show HDR, so HDR is converted to normal colour (it would look washed out on the rest).'}
+  return `Reclaimer will use ${fmt}.${extra}<br>${p.anyHdr?`HDR: ${p.hdr?'all of these show it':'some of these show it'}; you'll choose whether to keep it on the next screen.`:'None of these show HDR, so HDR is converted to normal colour.'}
    ${p.ass?' They all show styled anime subtitles themselves, so those stay switchable.':' Some can\'t show styled anime subtitles, so those are burned into the picture.'}`}
 let SU={};
 function lvOf(p){const h=p.max_height;return h>=2160?5:h>=1080?(p.cq<=22?5:4):h>=720?(p.cq>=28?2:3):1}
@@ -408,7 +408,8 @@ function buildPreset(n,lv,old){let [h,cq,caps]={1:[480,30,{480:1.2}],2:[720,28,{
   const need=n=='Concerts'?1:0,s=SU.a.sound,sur=n!='Lectures'&&((s=='surround'&&lv>=4-need)||(s=='soundbar'&&lv>=5-need));
   const pb=playback(SU.a.screens||[]),defBurn=((S.defaultPresetValues||{})[n]||{}).burn_subs||'none';
   return {...old,desc:(S.presetDescs||{})[n]??old.desc,max_height:h,cq:Math.max(18,Math.min(34,cq)),caps,audio:sur?'surround':'stereo',
-    hdr_to_sdr:!(lv==5&&SU.a.tv4k&&SU.a.hdr&&pb.hdr),burn_subs:defBurn=='none'?old.burn_subs:(pb.ass&&SU.a.screens.length?'none':defBurn)}}
+    hdr_to_sdr:!(SU.a.keepHdr&&pb.anyHdr&&lv>=3),   // 1-2 are background/phone viewing: HDR adds nothing there
+    burn_subs:defBurn=='none'?old.burn_subs:(pb.ass&&SU.a.screens.length?'none':defBurn)}}
 function catOf(n){return CATS.findIndex(c=>c[2].includes(n))}
 async function openSetup(){
   SU={a:JSON.parse(JSON.stringify(S.config.setup_answers||{})),keep:new Set(),touched:new Set(),keepOver:true,place:{},i:0,recs:await api('/api/recommend?scope=')};
@@ -441,10 +442,12 @@ function suRender(){const st=SU.steps[SU.i],B=$('#suBody');$('#suStep').textCont
     B.innerHTML=`<p class="dim" style="margin-top:0">Reclaimer builds its presets from your answers. Nothing changes until the last step, and you can run this again anytime from the Presets tab.</p>
      <h4>Your TV</h4>
      <label class="choice"><input type="checkbox" id="su4k" ${SU.a.tv4k?'checked':''}> I have a 4K TV<span>Lets anything you rate "Best it can be" stay in 4K. Without one, 4K files are brought down to 1080p, which looks the same on a 1080p TV.</span></label>
-     <label class="choice" id="suHdrRow" style="${SU.a.tv4k?'':'opacity:.45'}"><input type="checkbox" id="suHdr" ${SU.a.hdr?'checked':''} ${SU.a.tv4k?'':'disabled'}> …and it shows HDR<span>Keeps HDR on things you rate "Best it can be". Phones and older TVs will then need Plex to convert it while playing, which works but works the server harder.</span></label>
+     ${playback(SU.a.screens||[]).anyHdr?`<h4>Do you care about HDR?</h4>
+     <label class="choice"><input type="radio" name="suH" value="1" ${SU.a.keepHdr?'checked':''}> Yes, keep HDR<span>Shows and movies made in HDR stay that way and look their best on your HDR screens (for kinds of video you rate 3 or higher).${playback(SU.a.screens).hdr?'':' On devices without HDR, Plex converts the colour while playing: it works, but makes the server work harder.'}</span></label>
+     <label class="choice"><input type="radio" name="suH" value="0" ${SU.a.keepHdr?'':'checked'}> No, convert to normal colour<span>Plays directly on everything and the files are a little smaller. HDR content looks like a normal Blu-ray.</span></label>`:''}
      <h4>Your sound</h4>${[['tv','TV speakers or headphones','Stereo everywhere: smallest, and it\'s all those can play.'],['soundbar','A soundbar','Keeps surround sound only on things you rate "Best it can be" (concerts from "TV, sharp" up).'],
        ['surround','A surround system (5.1 or more)','Keeps surround sound on things you rate "TV, sharp" or better (concerts from "TV, not picky" up).']].map(([v,t,d])=>`<label class="choice"><input type="radio" name="suS" value="${v}" ${SU.a.sound==v?'checked':''}> ${t}<span>${d}</span></label>`).join('')}`;
-    $('#su4k').onchange=e=>{SU.a.tv4k=e.target.checked;if(!SU.a.tv4k)SU.a.hdr=false;suRender()};$('#suHdr').onchange=e=>SU.a.hdr=e.target.checked;
+    $('#su4k').onchange=e=>{SU.a.tv4k=e.target.checked;suRender()};B.querySelectorAll('[name=suH]').forEach(x=>x.onchange=()=>SU.a.keepHdr=x.value=='1');
     B.querySelectorAll('[name=suS]').forEach(x=>x.onchange=()=>SU.a.sound=x.value)}
   if(st=='levels'){$('#suTitle').textContent='How much does each kind of video matter to you?';
     const n=c=>c[2].reduce((a,p)=>a+(SU.count[p]||0),0),have=CATS.filter(c=>n(c)),none=CATS.filter(c=>!n(c));
