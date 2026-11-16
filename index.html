@@ -59,6 +59,8 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
 .cat{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;padding:8px 0;border-bottom:1px solid var(--line)}.cat .cn{flex:1;min-width:220px}
 .cat .cm{flex-basis:100%;text-align:right;font-size:12px;color:var(--dim)}.legend{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:13px;margin:8px 0 12px}
 .choice{display:block;padding:8px 10px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer}.choice span{display:block;color:var(--dim);font-size:12px;margin-left:22px}
+.savedmark{margin-left:8px;font-size:12px;color:var(--ok,#4fc38a);opacity:0;white-space:nowrap}.savedmark.go{animation:svd 2.2s ease}
+@keyframes svd{0%{opacity:0}10%{opacity:1}75%{opacity:1}100%{opacity:0}}
 #toast.bad{border-color:var(--bad);background:#3a1d1d;color:#ffd7d7;font-weight:600}
 #toast{position:fixed;bottom:16px;right:16px;background:var(--panel);border:1px solid var(--line);padding:10px 14px;border-radius:6px;display:none}
 </style></head><body>
@@ -124,7 +126,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
   </div>
  </div>
  <div class="bar" style="margin:14px 0 10px"><input type="text" id="newPreset" placeholder="name for a new preset" style="width:200px"> based on <select id="newFrom"></select><button id="addPreset">Add preset</button>
-  <span class="grow"></span><button id="runSetup">Run setup again</button><span id="pDirty" class="warn"></span><button id="savePresets" class="pri">Save changes</button></div>
+  <span class="grow"></span><button id="runSetup">Run setup again</button><span id="pDirty" class="dim" style="font-size:12px">Changes save as you make them.</span></div>
  <div id="pList"></div>
 </section>
 <section id="settings">
@@ -133,7 +135,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <div id="libs"></div>
  <div class="bar"><button id="addLib">Add library</button></div>
  <h3>Encoding</h3>
- <div class="bar">Encoder <select id="encoder"></select> &nbsp; Originals <select id="originals"><option value="move">move to holding folder</option><option value="delete">delete</option></select>
+ <div class="bar">Encoder <select id="encoder"></select> &nbsp; Format <select id="codec" title="set by setup from your devices"></select> &nbsp; Originals <select id="originals"><option value="move">move to holding folder</option><option value="delete">delete</option></select>
   &nbsp; Min savings % <input type="number" id="minSave" min="0" max="90">
   &nbsp; Check each encode <select id="verify"><option value="full">full: decode everything + compare pictures</option><option value="quick">quick: compare pictures</option><option value="off">off</option></select>
   &nbsp; Burn subs language <input type="text" id="burnLang" style="width:60px">
@@ -152,7 +154,14 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
   <label class="dim"><input type="checkbox" id="arrRescan"> ask them to rescan after changes</label>
   <button id="arrSync">Connect &amp; sync</button><span id="arrMsg" class="dim"></span></div>
  <h3>Media servers</h3>
- <p class="help">Optional; add whichever you use (any combination works). Reclaimer reads each show's and movie's genres from them to pick presets, pauses encoding while someone is watching, lists transcodes on the Health tab, and asks them to rescan after changes.
+ <p class="help">Optional, but it makes Reclaimer a lot smarter. Add whichever you use (any combination works). <b>Why connect?</b></p>
+ <ul class="help" style="margin-top:-4px">
+  <li><b>Right preset for each show:</b> reads genres, so anime, documentaries, sports and so on get the right treatment.</li>
+  <li><b>Plays directly on your devices:</b> Plex shows which kinds of device your household watches on (Roku, Xbox, phones…), so setup can pick a video format they all play without converting. Only device types are read, never what anyone watched.</li>
+  <li><b>Stays out of the way:</b> pauses encoding while someone is watching, and lists anything the server is converting on the Health tab.</li>
+  <li><b>Library stays tidy:</b> asks the server to rescan after files change.</li>
+ </ul>
+ <p class="help">
   <b>Plex</b> token: in Plex Web open any item → ⋯ → Get Info → View XML, then copy the <code>X-Plex-Token</code> value from that page's URL.
   <b>Jellyfin / Emby</b>: create an API key under Dashboard → API Keys. <b>Kodi</b>: turn on Settings → Services → Control → "Allow remote control via HTTP"; the URL is the device's address and port (usually 8080), plus the username/password set there.</p>
  <div class="bar" style="flex-wrap:nowrap"><b style="width:70px">Plex</b>URL <input type="text" id="plexUrl" placeholder="http://mynas:32400" style="width:220px"> Token <input type="text" id="plexToken" style="width:240px"></div>
@@ -173,7 +182,7 @@ details summary{cursor:pointer;color:var(--dim);font-size:12.5px}
  <div class="bar"><label class="dim"><input type="checkbox" id="updCheck"> check GitHub once a day for a newer version</label><button id="updNow">Check now</button></div>
  <div class="bar"><label class="dim"><input type="checkbox" id="notify"> show a Windows notification when a batch finishes</label></div>
  <div class="bar"><label class="dim">Port <input type="number" id="port" min="1024" max="65535" style="width:90px"></label><span class="dim" style="font-size:12px">The page lives at http://localhost:<i>port</i>. Change it only if another program needs this one; takes effect after you restart Reclaimer. If it's taken, the next free port is used.</span></div>
- <div class="bar"><button id="saveSettings" class="pri">Save settings</button><span id="setMsg" class="dim"></span></div>
+ <p class="hint" style="margin-top:14px">Changes save as you make them.</p><button id="saveSettings" style="display:none"></button><span id="setMsg" style="display:none"></span>
  <p class="help">Holding folder: <code>.reclaimer_originals</code> inside each library (with .plexignore files so Plex ignores it). <b>No space is freed until you delete it.</b> Failed/rejected files are remembered in reclaimer_state.json; use "retry" on them in the Recommendations tab.</p>
 </section>
 </main>
@@ -203,7 +212,7 @@ const jsArg=v=>esc(JSON.stringify(String(v)));
 let toastTimer;
 function toast(m,bad){const t=$('#toast');t.textContent=m;t.className=bad?'bad':'';t.style.display='block';clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.style.display='none',bad?Math.max(8000,m.length*90):Math.max(2500,m.length*60))}
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button,section').forEach(e=>e.classList.remove('on'));b.classList.add('on');$('#'+b.dataset.t).classList.add('on');
-  if(b.dataset.t=='cleanup'){loadDupes();renderJunk()} if(b.dataset.t=='health')loadHealth(); if(b.dataset.t=='presets'&&!$('#pDirty').textContent)renderPresets()});
+  if(b.dataset.t=='cleanup'){loadDupes();renderJunk()} if(b.dataset.t=='health')loadHealth(); if(b.dataset.t=='presets'&&!document.querySelector('.pedit[style*="block"]'))renderPresets()});
 
 let favState='';
 function setFavicon(){const q=S.queue||{},st=q.current?'working':q.waiting?'paused':'idle';if(st!==favState){favState=st;$('#favicon').href='/favicon.svg?s='+st}}
@@ -352,11 +361,11 @@ function renderPresets(){
    </div></div>`}).join('');
   document.querySelectorAll('.pcard').forEach(c=>{
     c.querySelector('.pe').onclick=()=>{const e=c.querySelector('.pedit'),o=e.style.display=='none';e.style.display=o?'block':'none';c.querySelector('.pe').textContent=o?'Done':'Edit'};
-    const del=c.querySelector('.pdel');if(del)del.onclick=()=>{if(confirm(`Delete the preset "${c.dataset.n}"? Shows using it go back to their library's default.`)){c.remove();markDirty()}};
+    const del=c.querySelector('.pdel');if(del)del.onclick=()=>{if(confirm(`Delete the preset "${c.dataset.n}"? Shows using it go back to their library's default.`)){c.remove();markDirty();toast('preset deleted')}};
     c.querySelector('.cq').oninput=e=>{c.querySelector('.qw').textContent=qWord(52-e.target.value)};
     c.querySelector('.au').onchange=e=>{c.querySelector('.ah').textContent=AUDIO[e.target.value][1]};
     c.querySelector('.burn').onchange=e=>{c.querySelector('.bh').textContent=BURN[e.target.value][1]};
-    c.querySelectorAll('input,select').forEach(x=>x.addEventListener('change',markDirty));
+    c.querySelectorAll('input,select').forEach(x=>x.addEventListener('change',()=>markDirty(x)));
   });
 }
 const CATS=[['Movies','Most films',['Movies HD','Movies SD']],['TV dramas','Everyday dramas and shows',['Live Action TV']],
@@ -369,6 +378,26 @@ const LV=[null,['Background','On while I\'m doing something else'],['Phone or ta
  ['TV, sharp','On the TV and I want it crisp'],['Best it can be','Big screen, I\'ll notice the difference']];
 const LVOUT=lv=>[null,'480p · smallest files','720p · small files','720p','1080p',SU.a.tv4k?'4K'+(SU.a.hdr?' with HDR':'')+' · biggest files':'1080p · high quality'][lv];
 const EASY=['Cartoons HD','Cartoons SD','Anime','Sitcom','Lectures','Talk & Reality'],HARD={'Sports':1.4,'Documentary':1.15,'Concerts':1.15,'Classic Film':1.15,'Dark & Moody':1.15,'Cinematic TV':1.15};
+// What each device can play directly. hevc/av1: video formats; hdr: shows HDR; ass: renders styled anime subtitles itself
+const DEV=[['TV boxes',[['roku_ultra22','Roku Ultra (2022 or newer)',{hevc:1,av1:1,hdr:1}],['roku','Other Roku 4K',{hevc:1,hdr:1}],['roku_old','Older Roku (HD only)',{}],
+   ['appletv4k','Apple TV 4K',{hevc:1,hdr:1}],['appletv_hd','Apple TV HD',{}],['firetv_4kmax2','Fire TV Stick 4K Max (2023)',{hevc:1,av1:1,hdr:1}],['firetv_4k','Other Fire TV 4K',{hevc:1,hdr:1}],
+   ['firetv_old','Older Fire TV Stick (HD)',{}],['googletv_streamer','Google TV Streamer',{hevc:1,av1:1,hdr:1}],['chromecast_gtv','Chromecast with Google TV',{hevc:1,hdr:1}],
+   ['chromecast_old','Older Chromecast',{}],['shield','NVIDIA Shield',{hevc:1,hdr:1,ass:1}]]],
+ ['Consoles',[['xbox_one','Xbox One / One S / One X',{hevc:1,hdr:1}],['xbox_series','Xbox Series X|S',{hevc:1,av1:1,hdr:1}],['ps4','PlayStation 4',{}],['ps5','PlayStation 5',{hevc:1,hdr:1}]]],
+ ['Smart TVs',[['smart_tv_new','Smart TV app, 2018 or newer (Samsung, LG, Sony…)',{hevc:1,hdr:1}],['smart_tv_old','Smart TV app, older than 2018',{}]]],
+ ['Phones & tablets',[['iphone','iPhone / iPad',{hevc:1,hdr:1,ass:1}],['android','Android phone or tablet',{hevc:1,ass:1}]]],
+ ['Computers',[['browser','Web browser (Plex Web, Jellyfin web)',{av1:1,ass:1}],['desktop','Plex / Jellyfin desktop app',{hevc:1,av1:1,hdr:1,ass:1}],['kodi','Kodi',{hevc:1,av1:1,hdr:1,ass:1}]]],
+ ['Other',[['other_old','Anything else older than ~2016',{}]]]];
+const DEVS=Object.fromEntries(DEV.flatMap(g=>g[1]).map(d=>[d[0],{name:d[1],...d[2]}]));
+function playback(ids){const d=ids.map(i=>DEVS[i]).filter(Boolean),all=k=>d.length>0&&d.every(x=>x[k]),hw=(S.av1Encoders||[]).length>0;
+  const codec=all('av1')&&hw?'av1':all('hevc')?'hevc':d.length?'h264':'hevc';
+  return {codec,hdr:all('hdr'),ass:all('ass'),noHevc:d.filter(x=>!x.hevc).map(x=>x.name),av1No:d.filter(x=>!x.av1).map(x=>x.name),hw}}
+function playbackText(ids){if(!ids.length)return '<span class="dim">Tick at least one device.</span>';const p=playback(ids);
+  const fmt={hevc:'<b>HEVC</b>: small files, and everything you ticked plays it directly',h264:`<b>H.264</b>, so everything plays directly. ${esc(p.noHevc.join(', '))} can't play HEVC; files will be bigger than HEVC (about 40%). Untick it if you don't watch your library on it`,
+    av1:'<b>AV1</b>: the smallest files, and everything you ticked plays it directly'}[p.codec];
+  const extra=p.codec=='hevc'&&!p.av1No.length&&!p.hw?' (AV1 would be even smaller, but this PC\'s graphics card can\'t make it.)':p.codec=='hevc'&&p.av1No.length&&p.av1No.length<3?` (AV1 would be smaller, but ${esc(p.av1No.join(', '))} can't play it.)`:'';
+  return `Reclaimer will use ${fmt}.${extra}<br>${p.hdr?'All of these show HDR, so HDR can be kept.':'Not all of these show HDR, so HDR is converted to normal colour (it would look washed out on the rest).'}
+   ${p.ass?' They all show styled anime subtitles themselves, so those stay switchable.':' Some can\'t show styled anime subtitles, so those are burned into the picture.'}`}
 let SU={};
 function lvOf(p){const h=p.max_height;return h>=2160?5:h>=1080?(p.cq<=22?5:4):h>=720?(p.cq>=28?2:3):1}
 function edited(n){const p=S.config.presets[n],r=(S.config.setup_presets||{})[n]||(S.defaultPresetValues||{})[n];if(!p||!r)return false;
@@ -377,7 +406,9 @@ function buildPreset(n,lv,old){let [h,cq,caps]={1:[480,30,{480:1.2}],2:[720,28,{
   caps={...caps};if(lv==5&&SU.a.tv4k){h=2160;caps[2160]=16}if(/ SD$/.test(n))h=Math.min(h,480);
   const f=EASY.includes(n)?0.7:HARD[n]||1;cq+=EASY.includes(n)?2:HARD[n]?-1:0;for(const t in caps)caps[t]=Math.max(0.5,Math.round(caps[t]*f*2)/2);
   const need=n=='Concerts'?1:0,s=SU.a.sound,sur=n!='Lectures'&&((s=='surround'&&lv>=4-need)||(s=='soundbar'&&lv>=5-need));
-  return {...old,desc:(S.presetDescs||{})[n]??old.desc,max_height:h,cq:Math.max(18,Math.min(34,cq)),caps,audio:sur?'surround':'stereo',hdr_to_sdr:!(lv==5&&SU.a.tv4k&&SU.a.hdr)}}
+  const pb=playback(SU.a.screens||[]),defBurn=((S.defaultPresetValues||{})[n]||{}).burn_subs||'none';
+  return {...old,desc:(S.presetDescs||{})[n]??old.desc,max_height:h,cq:Math.max(18,Math.min(34,cq)),caps,audio:sur?'surround':'stereo',
+    hdr_to_sdr:!(lv==5&&SU.a.tv4k&&SU.a.hdr&&pb.hdr),burn_subs:defBurn=='none'?old.burn_subs:(pb.ass&&SU.a.screens.length?'none':defBurn)}}
 function catOf(n){return CATS.findIndex(c=>c[2].includes(n))}
 async function openSetup(){
   SU={a:JSON.parse(JSON.stringify(S.config.setup_answers||{})),keep:new Set(),touched:new Set(),keepOver:true,place:{},i:0,recs:await api('/api/recommend?scope=')};
@@ -385,7 +416,10 @@ async function openSetup(){
   CATS.forEach(([c,,ps])=>{const p=S.config.presets[ps[0]];if(SU.a.lv[c]==null)SU.a.lv[c]=p?lvOf(p):3});
   SU.unplaced=SU.recs.filter(r=>!r.source&&!(r.key in S.config.overrides));
   if(S.config.setup_done)CATS.forEach(c=>c[2].forEach(n=>{if(edited(n))SU.keep.add(n)}));
-  SU.steps=[...(S.config.setup_done?['warn']:[]),'devices','levels',...(SU.unplaced.length?['unplaced']:[]),'done'];
+  SU.a.screens??=(S.config.devices||[]).slice();SU.plexSeen=[];
+  if(S.config.plex_url&&S.config.plex_token)api('/api/devices',{}).then(r=>{if(!r||r.error)return;SU.plexSeen=r.seen||[];
+    if(!(S.config.devices||[]).length&&!(SU.a.screensTouched))r.ids.forEach(i=>{if(!SU.a.screens.includes(i))SU.a.screens.push(i)});if(SU.steps[SU.i]=='screens')suRender()});
+  SU.steps=[...(S.config.setup_done?['warn']:[]),'screens','devices','levels',...(SU.unplaced.length?['unplaced']:[]),'done'];
   $('#su').classList.add('on');suRender()}
 function suRender(){const st=SU.steps[SU.i],B=$('#suBody');$('#suStep').textContent=`Step ${SU.i+1} of ${SU.steps.length}`;$('#suBack').style.visibility=SU.i?'visible':'hidden';
   $('#suNext').textContent=st=='done'?'Done':SU.steps[SU.i+1]=='done'?'Build my presets':'Next';
@@ -395,7 +429,15 @@ function suRender(){const st=SU.steps[SU.i],B=$('#suBody');$('#suStep').textCont
      <div style="columns:2;margin:10px 0">${ps.map(n=>`<label style="display:block;margin:3px 0"><input type="checkbox" class="sk" data-n="${esc(n)}" ${SU.keep.has(n)?'checked':''}> ${esc(n)}${edited(n)?' <span class="dim" style="font-size:12px">(edited)</span>':''}</label>`).join('')}</div>
      <label class="choice"><input type="checkbox" id="suOver" ${SU.keepOver?'checked':''}> Keep the presets I picked for individual shows<span>Choices you made from the dropdown on the Recommendations tab.</span></label>`;
     B.querySelectorAll('.sk').forEach(x=>x.onchange=()=>x.checked?SU.keep.add(x.dataset.n):SU.keep.delete(x.dataset.n));$('#suOver').onchange=e=>SU.keepOver=e.target.checked}
-  if(st=='devices'){$('#suTitle').textContent=S.config.setup_done?'How you watch':'Welcome! A few questions about how you watch';
+  if(st=='screens'){$('#suTitle').textContent=S.config.setup_done?'Where do you watch?':'Welcome! First: where do you watch?';
+    const seen=new Set(SU.plexSeen.map(x=>x.device));
+    B.innerHTML=`<p class="dim" style="margin-top:0">Tick everything your household watches on. Reclaimer picks a video format they can <b>all</b> play directly, so your server never has to convert while you watch. Nothing changes until the last step.</p>
+     ${S.config.plex_url&&S.config.plex_token?(SU.plexSeen.length?`<p class="ok" style="font-size:13px">Ticked from Plex: devices that played something in the last year (${esc(SU.plexSeen.map(x=>x.name).slice(0,6).join(', '))}${SU.plexSeen.length>6?'…':''}). Check the model is right; Plex can't always tell a newer Roku from an older one.</p>`:'<p class="dim" style="font-size:13px">Checking Plex for your devices…</p>')
+       :'<p class="dim" style="font-size:13px">Tip: connect Plex in Settings and Reclaimer fills this in from the devices that actually play from it.</p>'}
+     ${DEV.map(([g,ds])=>`<h4>${g}</h4><div style="columns:2">${ds.map(([id,n])=>`<label style="display:block;margin:3px 0"><input type="checkbox" class="scr" value="${id}" ${SU.a.screens.includes(id)?'checked':''}> ${esc(n)}${seen.has(id)?' <span class="tag ok">from Plex</span>':''}</label>`).join('')}</div>`).join('')}
+     <div class="intro" style="margin-top:12px;padding:10px 12px;font-size:13px" id="scrSum">${playbackText(SU.a.screens)}</div>`;
+    B.querySelectorAll('.scr').forEach(x=>x.onchange=()=>{SU.a.screensTouched=true;SU.a.screens=[...B.querySelectorAll('.scr:checked')].map(i=>i.value);$('#scrSum').innerHTML=playbackText(SU.a.screens)})}
+  if(st=='devices'){$('#suTitle').textContent='Your TV and sound';
     B.innerHTML=`<p class="dim" style="margin-top:0">Reclaimer builds its presets from your answers. Nothing changes until the last step, and you can run this again anytime from the Presets tab.</p>
      <h4>Your TV</h4>
      <label class="choice"><input type="checkbox" id="su4k" ${SU.a.tv4k?'checked':''}> I have a 4K TV<span>Lets anything you rate "Best it can be" stay in 4K. Without one, 4K files are brought down to 1080p, which looks the same on a 1080p TV.</span></label>
@@ -442,13 +484,15 @@ async function suApply(){const P=JSON.parse(JSON.stringify(S.config.presets)),ma
   const ov=SU.keepOver?{...S.config.overrides}:{};
   for(const [k,ci] of Object.entries(SU.place)){const r=SU.recs.find(x=>x.key==k),ps=CATS[ci][2],maxh=Math.max(...r.files.map(f=>+f.res.split('x')[1]||0));
     ov[k]=ps.length>1&&maxh<=576&&P[ps[1]]?ps[1]:ps[0]}
-  const r=await api('/api/config',{presets:P,overrides:ov,setup_done:true,setup_presets:{...(S.config.setup_presets||{}),...made},setup_answers:SU.a});if(r.error)return;
+  const pb=playback(SU.a.screens||[]);
+  const r=await api('/api/config',{presets:P,overrides:ov,setup_done:true,devices:SU.a.screens||[],codec:pb.codec,setup_presets:{...(S.config.setup_presets||{}),...made},setup_answers:SU.a});if(r.error)return;
   S=await api('/api/state');renderPresets();loadRecs();const A=await api('/api/recommend?scope=');
   const live=A.filter(x=>!x.protected),size=live.reduce((a,x)=>a+x.size,0),est=live.reduce((a,x)=>a+x.est,0);
   const ex=c=>A.filter(x=>c[2].includes(x.preset)).flatMap(x=>x.files).filter(f=>f.action=='encode').sort((a,b)=>b.size-a.size)[0];
   const cats=CATS.filter(c=>A.some(x=>c[2].includes(x.preset)));
   $('#suBody').innerHTML=`<div class="cards" style="margin:0 0 14px"><div class="card"><b>${gb(size)}</b><span>your library now</span></div><div class="card"><b>${gb(est)}</b><span>after Reclaimer, roughly</span></div>
     <div class="card"><b class="ok">${gb(size-est)}</b><span>saved (${size?Math.round(100*(size-est)/size):0}%)</span></div></div>
+    <p>Video format: <b>${esc({hevc:'HEVC',h264:'H.264',av1:'AV1'}[S.outCodec]||S.outCodec)}</b>, which all your devices play directly.</p>
     <p class="dim">Nothing has been encoded yet. Queue things from the Recommendations tab when you're ready. Want to see what a choice looks like first? Preview one of your own files:</p>
     ${cats.map(c=>{const f=ex(c),p=S.config.presets[c[2][0]];return `<div class="cat"><div class="cn"><b>${esc(c[0])}</b> <span class="dim" style="font-size:12px">${c[2].some(n=>SU.keep.has(n))?'kept as is':`${LV[SU.a.lv[c[0]]][0]} · ${LVOUT(SU.a.lv[c[0]])}`}${p?' · '+(AUDIO[p.audio]?.[0]||p.audio):''}</span></div>
       ${f?`<button class="sp" data-p="${esc(f.path)}">Preview</button>`:'<span class="dim" style="font-size:12px">nothing to encode</span>'}</div>`}).join('')}`;
@@ -456,15 +500,24 @@ async function suApply(){const P=JSON.parse(JSON.stringify(S.config.presets)),ma
 $('#suNext').onclick=()=>{if(SU.steps[SU.i]=='done'){$('#su').classList.remove('on');toast('setup saved');return}SU.i++;suRender()};
 $('#suBack').onclick=()=>{if(SU.i){SU.i--;suRender()}};$('#suClose').onclick=()=>$('#su').classList.remove('on');$('#runSetup').onclick=openSetup;
 let suAsked=false;
-function markDirty(){$('#pDirty').textContent='Unsaved changes'}
+const saveTimers={};
+function savedFlash(el){if(!el)return;const at=el.closest('label,td,.pf,.row')||el;let s=at.querySelector(':scope > .savedmark');
+  if(!s){s=document.createElement('span');s.className='savedmark';s.textContent='Saved ✓';at.appendChild(s)}s.classList.remove('go');void s.offsetWidth;s.classList.add('go')}
+function autoSave(what,el){clearTimeout(saveTimers[what]);saveTimers[what]=setTimeout(async()=>{
+  const ok=what=='presets'?await savePresetsNow():(await $('#saveSettings').onclick(),true);if(ok!==false)savedFlash(el)},400)}
+$('#settings').addEventListener('change',e=>{if(e.target.closest('#settings')&&!e.target.dataset.nosave)autoSave('settings',e.target)});
+function markDirty(el){autoSave('presets',el)}
 function readPresets(){const out={};document.querySelectorAll('.pcard').forEach(c=>{const caps={};c.querySelectorAll('.cap').forEach(i=>{if(i.value)caps[i.dataset.t]=+i.value});
   out[c.dataset.n]={desc:c.querySelector('.pd').value.trim(),max_height:+c.querySelector('.mh').value,caps,cq:52-(+c.querySelector('.cq').value),audio:c.querySelector('.au').value,
    hdr_to_sdr:c.querySelector('.hdr').checked,ten_bit:c.querySelector('.tenbit').checked,denoise:c.querySelector('.dn').value,burn_subs:c.querySelector('.burn').value}});return out}
 $('#addPreset').onclick=()=>{const n=$('#newPreset').value.trim();if(!n)return toast('give the new preset a name first',true);const all=readPresets();if(all[n])return toast('a preset with that name already exists',true);
   all[n]={...JSON.parse(JSON.stringify(all[$('#newFrom').value])),desc:''};S.config.presets=all;$('#newPreset').value='';renderPresets();markDirty();
   const c=[...document.querySelectorAll('.pcard')].pop();c.querySelector('.pe').click();c.scrollIntoView({behavior:'smooth',block:'center'})};
-$('#savePresets').onclick=async()=>{const presets=readPresets();for(const [n,p] of Object.entries(presets))if(!Object.keys(p.caps).length)return toast(`"${n}" needs at least one size limit (open Edit → Size limits)`,true);
-  const r=await api('/api/config',{presets});if(r.error)return;toast('presets saved');$('#pDirty').textContent='';S=await api('/api/state');renderPresets();loadRecs()};
+async function savePresetsNow(){const presets=readPresets();for(const [n,p] of Object.entries(presets))if(!Object.keys(p.caps).length){toast(`"${n}" needs at least one size limit (open Edit → Size limits)`,true);return false}
+  const r=await api('/api/config',{presets});if(r.error)return false;S=await api('/api/state');
+  document.querySelectorAll('.pcard').forEach(c=>{const p=S.config.presets[c.dataset.n];if(!p)return;const top=c.querySelector('.ptop');   // refresh the summary tags, keep editors open
+    top.querySelectorAll('.tag').forEach(t=>t.remove());top.querySelector('b').insertAdjacentHTML('afterend',chips(p).map(x=>`<span class="tag">${esc(x)}</span>`).join(''));c.querySelector('.pdesc').textContent=p.desc||''});
+  loadRecs();return true}
 
 let updHidden='';
 function renderUpdate(){const u=S.update||{},b=$('#upd');if(!u.newer||updHidden==u.latest){b.style.display='none';return}b.style.display='block';
@@ -479,6 +532,7 @@ function renderUpdate(){const u=S.update||{},b=$('#upd');if(!u.newer||updHidden=
 function renderSettings(){$('#updNow').onclick=async()=>{const r=await api('/api/update/check',{});if(r.error)return;S.update=r;renderUpdate();toast(r.newer?`version ${r.latest} is available`:`you're up to date (${S.appVersion})`)};if(S.appVersion)$('#appVer').textContent='v'+S.appVersion;
   const c=S.config;
   $('#encoder').innerHTML=S.encoders.map(e=>`<option value="${e.id}" ${e.id==c.encoder?'selected':''} ${e.ok||e.id==c.encoder?'':'disabled'}>${esc(e.name)}${e.ok?'':' (not available on this PC)'}</option>`).join('');
+  $('#codec').innerHTML=(S.codecs||[]).map(x=>`<option value="${x.id}" ${x.id==c.codec?'selected':''} ${x.ok||x.id==c.codec?'':'disabled'}>${x.name}${x.ok?'':' (this PC can\'t make it)'}</option>`).join('');
   if(S.encoderNote&&!window.encNoted){window.encNoted=1;toast(S.encoderNote)}
   $('#originals').value=c.originals;$('#minSave').value=c.min_savings_percent;$('#verify').value=c.verify||'full';$('#showRule').value=c.show_rule;$('#burnLang').value=c.burn_subs_lang||'eng';
   $('#libs').innerHTML=c.libraries.map(l=>libRow(l)).join('');bindLibs();
@@ -502,7 +556,7 @@ async function langItems(b){const tr=b.closest('tr'),nx=tr.nextElementSibling;if
   const trk=(f,t)=>`${esc(t.codec)} ${t.ch}ch${t.title?` "${esc(t.title)}"`:''}${t.guessed?' <span class="dim">(language guessed from title)</span>':''}${t.says?` <span class="warn">title says ${esc(t.says)}</span>`:''}
    <button class="lplay" data-p="${esc(f.path)}" data-i="${t.idx}" title="play 10 seconds of this track">▶ Listen</button>
    ${t.says_code?`<button class="lfix" data-p="${esc(f.path)}" data-i="${t.idx}" data-to="${t.says_code}">Set to ${esc(t.says)}</button>`:''}
-   <select class="lto" data-p="${esc(f.path)}" data-i="${t.idx}"><option value="">Change to…</option>${opts}<option value="?">Other code…</option></select>`;
+   <select class="lto" data-nosave="1" data-p="${esc(f.path)}" data-i="${t.idx}"><option value="">Change to…</option>${opts}<option value="?">Other code…</option></select>`;
   tr.insertAdjacentHTML('afterend',`<tr class="lx"><td colspan="6" style="padding:8px 4px 14px">
    <p class="hint" style="margin:0 0 8px">${I.length} show${I.length==1?'':'s'}/movies. ${fl?`<span class="warn">${fl} look mislabelled</span> (a track's own title names another language) and are listed first. `:''}<b>only track</b> means it's the file's only audio, so it's either really this language or labelled wrong. Click a title to see its files.</p>
    ${I.map(i=>`<details class="li"><summary><b>${esc(i.title)}</b> <span class="dim">${i.type=='tv'?'TV':'movie'} · ${i.files.length} file${i.files.length==1?'':'s'} · ${gb(i.bytes)}${i.genres.length?' · '+esc(i.genres.join(', ')):''}</span>
@@ -520,15 +574,15 @@ async function langItems(b){const tr=b.closest('tr'),nx=tr.nextElementSibling;if
 let langDirty=false;function loadLangSoon(){langDirty=true}
 const presetOpts=v=>'<option value="">(library default)</option>'+Object.keys(S.config.presets).map(n=>`<option ${n==v?'selected':''}>${esc(n)}</option>`).join('');
 const ruleRow=r=>`<tr><td><input type="text" class="rg" value="${esc(r.genre)}"></td><td><select class="rt">${presetOpts(r.tv)}</select></td><td><select class="rm">${presetOpts(r.movies)}</select></td><td><button class="del">✕</button></td></tr>`;
-function bindRules(){document.querySelectorAll('#ruleBody .del').forEach(b=>b.onclick=()=>b.closest('tr').remove())}
+function bindRules(){document.querySelectorAll('#ruleBody .del').forEach(b=>b.onclick=()=>{b.closest('tr').remove();autoSave('settings',b.closest('table'))})}
 $('#addRule').onclick=()=>{$('#ruleBody').insertAdjacentHTML('beforeend',ruleRow({genre:'',tv:'',movies:''}));bindRules()};
 const readRules=()=>[...document.querySelectorAll('#ruleBody tr')].map(r=>({genre:r.querySelector('.rg').value.trim(),tv:r.querySelector('.rt').value,movies:r.querySelector('.rm').value})).filter(r=>r.genre);
 $('#plexSync').onclick=async()=>{await $('#saveSettings').onclick();const r=await api('/api/media/sync',{});poll()};
 const libRow=l=>`<div class="row"><input type="text" class="lp" value="${esc(l.path)}" placeholder="\\\\mynas\\video\\Movies"><select class="lt"><option value="movies" ${l.type=='movies'?'selected':''}>movies</option><option value="tv" ${l.type=='tv'?'selected':''}>tv</option></select><select class="lpr">${Object.keys(S.config.presets).map(n=>`<option ${n==l.preset?'selected':''}>${esc(n)}</option>`).join('')}</select><button class="del">✕</button></div>`;
-function bindLibs(){document.querySelectorAll('#libs .del').forEach(b=>b.onclick=()=>b.closest('.row').remove())}
+function bindLibs(){document.querySelectorAll('#libs .del').forEach(b=>b.onclick=()=>{const l=$('#libs');b.closest('.row').remove();autoSave('settings',l)})}
 $('#addLib').onclick=()=>{$('#libs').insertAdjacentHTML('beforeend',libRow({path:'',type:'movies',preset:'Movies HD'}));bindLibs()};
 $('#saveSettings').onclick=async()=>{const libraries=[...document.querySelectorAll('#libs .row')].map(r=>({path:r.querySelector('.lp').value.trim(),type:r.querySelector('.lt').value,preset:r.querySelector('.lpr').value})).filter(l=>l.path);
-  await api('/api/config',{libraries,encoder:$('#encoder').value,originals:$('#originals').value,min_savings_percent:+$('#minSave').value,verify:$('#verify').value,show_rule:$('#showRule').value,burn_subs_lang:$('#burnLang').value.trim()||'eng',
+  await api('/api/config',{libraries,encoder:$('#encoder').value,codec:$('#codec').value,originals:$('#originals').value,min_savings_percent:+$('#minSave').value,verify:$('#verify').value,show_rule:$('#showRule').value,burn_subs_lang:$('#burnLang').value.trim()||'eng',
     window:{enabled:$('#winOn').checked,start:+$('#winStart').value,end:+$('#winEnd').value},pause_when_streaming:$('#pauseStream').checked,auto_mode:$('#autoMode').checked,auto_interval_min:Math.max(5,+$('#autoInt').value||30),notify:$('#notify').checked,update_check:$('#updCheck').checked,port:Math.min(65535,Math.max(1024,+$('#port').value||36597)),
     audio_lang_filter:$('#langOn').checked,audio_keep_default:$('#langDefault').checked,audio_keep_unknown:$('#langUnknown').checked,
     audio_keep_langs:document.querySelectorAll('#langBody .lk').length?[...document.querySelectorAll('#langBody .lk:checked')].map(i=>i.value):S.config.audio_keep_langs,
@@ -537,7 +591,7 @@ $('#saveSettings').onclick=async()=>{const libraries=[...document.querySelectorA
     plex_url:$('#plexUrl').value.trim(),plex_token:$('#plexToken').value.trim(),plex_refresh:$('#plexRefresh').checked,plex_rules:readRules(),
     jellyfin_url:$('#jfUrl').value.trim(),jellyfin_key:$('#jfKey').value.trim(),emby_url:$('#embyUrl').value.trim(),emby_key:$('#embyKey').value.trim(),
     kodi_url:$('#kodiUrl').value.trim(),kodi_user:$('#kodiUser').value.trim(),kodi_password:$('#kodiPass').value});
-  $('#setMsg').textContent='saved';S=await api('/api/state');fillPresetSelects();loadRecs()};
+  S=await api('/api/state');fillPresetSelects();loadRecs()};
 // ---------- cleanup ----------
 const short=p=>{const l=(S.config.libraries||[]).find(l=>p.toLowerCase().startsWith(l.path.toLowerCase()));return l?l.path.split(/[\\/]/).filter(Boolean).slice(-2).join('/')+' › '+p.slice(l.path.length).replace(/^[\\/]/,''):p};
 async function loadDupes(){dupes=await api('/api/dupes',{});dupes.forEach(g=>{g.sel=false;g.keep=g.files.find(f=>f.keep).path});renderDupes()}

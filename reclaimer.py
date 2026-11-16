@@ -33,6 +33,7 @@ STATE_PATH, LOG_PATH = HERE / "reclaimer_state.json", HERE / "reclaimer_log.csv"
 CACHE_VERSION = 3
 TMP_PREFIX, MARK_TAG = ".reclaimer-tmp-", "RECLAIMER"
 TIERS = [480, 576, 720, 1080, 1440, 2160]
+TARGET_EFF = {"hevc": 1.0, "av1": 0.75, "h264": 1.5}   # bits each output format needs vs HEVC for the same picture
 CODEC_FACTOR = {"hevc": 1.0, "av1": 1.0, "h264": 0.65, "vp9": 0.8}   # size of HEVC vs source at equal quality
 LEGACY = 0.45
 AUDIO_GUESS_KBPS = {"truehd": 3000, "dts": 1509, "flac": 900, "mlp": 3000, "ac3": 448, "eac3": 640,
@@ -122,6 +123,8 @@ DEFAULT_CONFIG = {
     "verify_min_ssim": 0.80,  # a sampled picture scoring below this against the original fails the encode
     "protected": [],          # show/movie folders or files that are never touched
     "port": 36597,            # where the page lives: http://localhost:<port> (restart to apply)
+    "codec": "hevc",          # hevc | h264 | av1: format of new encodes, picked by setup from your devices
+    "devices": [],            # devices you watch on (setup), used to pick the format, HDR and subtitle handling
     "update_check": True,     # once a day, ask GitHub whether a newer release is out
     "online_lookup": False,   # look up genres on TVmaze/TMDB for things setup couldn't place (sends their names)
     "tmdb_key": "",           # optional free TMDB key: better matches, and movies too
@@ -647,7 +650,7 @@ def evaluate(info, pname, p, typ):
     prev = STATE.get(info["path"])
     if prev and prev.get("size") == info["size"]:
         return {**plan, "action": "skip", "reasons": [prev["reason"]]}
-    tone = p["hdr_to_sdr"] and info["hdr"]
+    tone = info["hdr"] and (p["hdr_to_sdr"] or out_codec() == "h264")   # H.264 has no proper HDR
     if info["dv_profile"] == 5 and tone:
         return {**plan, "action": "skip", "reasons": ["Dolby Vision profile 5 can't be tone-mapped"]}
     ow, oh = fit(info["width"], info["height"], p["max_height"])
@@ -663,6 +666,7 @@ def evaluate(info, pname, p, typ):
         cap = cap_for(p["caps"], ow, oh) if guard[0] <= top else float(p["caps"][str(top)]) * 1e6 * (guard[0] / top) ** 2
         plan["reasons"].append(f"kept at {guard[0]}p for {guard[1]}")
         plan["arr_kept"] = True
+    cap *= TARGET_EFF[out_codec()]                   # caps are written in HEVC terms
     if info.get("fps", 0) > 40:
         cap *= 1.5                                    # caps assume ~24-30 fps; 50/60 fps needs more bits for the same quality
     if (ow, oh) != (info["width"], info["height"]):
@@ -681,10 +685,10 @@ def evaluate(info, pname, p, typ):
     if any(a[1] not in ("copy", "drop") for a in audio) or (any(a[1] == "drop" for a in audio) and not dropped_langs):
         plan["reasons"].append("audio")
     # estimate: what would the video weigh after a HEVC encode at this quality?
-    factor = CODEC_FACTOR.get(info["codec"], LEGACY)
+    factor = CODEC_FACTOR.get(info["codec"], LEGACY) * TARGET_EFF[out_codec()]
     px = (ow * oh) / max(1, info["width"] * info["height"])
     vbps = min(info["vbps"] * factor * px ** 0.8, cap)
-    if (info["codec"] == "hevc" and info["vbps"] <= cap and px == 1) or video_copy:
+    if (info["codec"] in ("hevc", out_codec()) and info["vbps"] <= cap and px == 1) or video_copy:
         vbps = info["vbps"]          # video stays as it is
     est = (vbps + abps) * info["duration"] / 8 + 2e6
     saving = 1 - est / max(1, info["size"])
@@ -763,6 +767,37 @@ def plex_get(path, **params):
     with urlopen(Request(url, headers={"Accept": "application/json"}), timeout=60) as r:
         body = r.read()
     return json.loads(body)["MediaContainer"] if body.strip() else {}
+
+PLATFORMS = [("xbox series", "xbox_series"), ("xbox", "xbox_one"), ("playstation 5", "ps5"), ("ps5", "ps5"), ("playstation", "ps4"),
+             ("ps4", "ps4"), ("roku", "roku"), ("tvos", "appletv4k"), ("apple tv", "appletv4k"), ("shield", "shield"),
+             ("aft", "firetv_4k"), ("fire tv", "firetv_4k"), ("chromecast", "chromecast_gtv"), ("google tv", "chromecast_gtv"),
+             ("webos", "smart_tv_new"), ("tizen", "smart_tv_new"), ("netcast", "smart_tv_new"), ("vizio", "smart_tv_new"),
+             ("samsung", "smart_tv_new"), ("lg", "smart_tv_new"), ("bravia", "smart_tv_new"), ("ios", "iphone"), ("ipad", "iphone"),
+             ("iphone", "iphone"), ("android", "android"), ("kodi", "kodi"), ("htpc", "desktop"), ("plex for windows", "desktop"),
+             ("plex for mac", "desktop"), ("windows", "desktop"), ("macos", "desktop"), ("osx", "desktop"),
+             ("chrome", "browser"), ("firefox", "browser"), ("safari", "browser"), ("edge", "browser"), ("opera", "browser")]
+
+def plex_devices():
+    """Device types that have played from this Plex server in the last year: only player types, nothing about what was watched."""
+    if not (CFG.get("plex_url") and CFG.get("plex_token")):
+        return {"ids": [], "seen": []}
+    devs = {str(d.get("id")): d for d in plex_get("/devices").get("Device", [])}
+    try:
+        since = int(time.time() - 365 * 86400)
+        hist = plex_get("/status/sessions/history/all", **{"viewedAt>": since, "X-Plex-Container-Size": 5000}).get("Metadata", [])
+        used = {str(h.get("deviceID")) for h in hist}
+        devs = {k: d for k, d in devs.items() if k in used} or devs
+    except Exception:
+        pass
+    ids, seen = [], []
+    for d in devs.values():
+        text = f"{d.get('platform', '')} {d.get('name', '')} {d.get('product', '')}".lower()
+        hit = next((dev for key, dev in PLATFORMS if re.search(r"\b" + re.escape(key), text)), None)
+        if hit:
+            seen.append({"name": d.get("name") or d.get("platform"), "platform": d.get("platform", ""), "device": hit})
+            if hit not in ids:
+                ids.append(hit)
+    return {"ids": ids, "seen": seen}
 
 def local_dir_index():
     """tail-of-path -> local folders, so a server's /volume1/video/TV/Show/Season 1 (or smb://nas/video/TV/Show/)
@@ -1230,8 +1265,8 @@ def probe_filters():
 
 def build_cmd(info, plan, p, out, hwaccel=True, clip=None, preview=False):
     """clip=(start_s, length_s) cuts a piece; preview=True makes a small MP4 (first audio track as AAC, no subs)."""
-    enc, tone = CFG["encoder"], plan["hdr_to_sdr"]
-    ten_bit = (info["hdr"] and not tone) or bool(p.get("ten_bit"))
+    tone = plan["hdr_to_sdr"]
+    ten_bit = ((info["hdr"] and not tone) or bool(p.get("ten_bit"))) and out_codec() != "h264"   # 10-bit H.264 plays almost nowhere
     denoise = {"light": "hqdn3d=1.5:1.5:6:6", "medium": "hqdn3d=3:3:9:9"}.get(p.get("denoise", "none"))
     cmd = ["ffmpeg", "-hide_banner", "-nostdin", "-y", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
     if hwaccel and CFG["hwaccel_decode"] not in ("", "none") and not plan.get("video_copy"):
@@ -1269,19 +1304,8 @@ def build_cmd(info, plan, p, out, hwaccel=True, clip=None, preview=False):
     k = int(plan["cap"] / 1000)
     if plan.get("video_copy"):
         cmd += ["-c:v:0", "copy"]
-    elif enc == "hevc_qsv":
-        cmd += ["-c:v:0", "hevc_qsv", "-preset", "slower", "-global_quality", str(p["cq"]), "-look_ahead", "1",
-                "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-profile:v", "main10" if ten_bit else "main"]
-    elif enc == "hevc_amf":
-        cmd += ["-c:v:0", "hevc_amf", "-quality", "quality", "-rc", "qvbr", "-qvbr_quality_level", str(max(1, min(51, 52 - p["cq"]))),
-                "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-profile:v", "main10" if ten_bit else "main"]
-    elif enc == "hevc_nvenc":
-        cmd += ["-c:v:0", "hevc_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", str(p["cq"]), "-b:v", "0",
-                "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-spatial-aq", "1", "-temporal-aq", "1",
-                "-profile:v", "main10" if ten_bit else "main"]
     else:
-        cmd += ["-c:v:0", "libx265", "-preset", "medium", "-crf", str(p["cq"] - 2),
-                "-x265-params", f"vbv-maxrate={k}:vbv-bufsize={2 * k}:log-level=error"]
+        cmd += ["-c:v:0"] + encoder_args(vendor(), out_codec(), p["cq"], k, ten_bit)
     pre, post = [], []   # filters before / after the subtitle overlay (subs are sized for the source frame)
     if plan.get("video_copy"):
         tone = False
@@ -1312,7 +1336,7 @@ def build_cmd(info, plan, p, out, hwaccel=True, clip=None, preview=False):
     for t in STAT_TAGS:  # stale mkvmerge stats would make the new file report the old bitrate
         cmd += ["-metadata:s:v:0", f"{t}=", "-metadata:s:v:0", f"{t}-eng="]
     cmd += ["-metadata", f"{MARK_TAG}={plan['preset']}", "-max_muxing_queue_size", "9999"]
-    hevc_out = not plan.get("video_copy") or info["codec"] == "hevc"
+    hevc_out = (out_codec() == "hevc" and not plan.get("video_copy")) or (plan.get("video_copy") and info["codec"] == "hevc")
     cmd += (["-tag:v", "hvc1"] if hevc_out else []) + ["-movflags", "+faststart", "-f", "mp4", str(out)] if preview else ["-f", "matroska", str(out)]
     return cmd
 
@@ -1332,11 +1356,11 @@ def prepare_ass(info, plan, clip=None):
 
 def display_codec():
     """Near-lossless H.264 for the comparison clips: every browser plays it, and it hides nothing."""
-    if CFG["encoder"] == "hevc_nvenc":
+    if vendor() == "nvenc":
         return ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "14", "-b:v", "0", "-pix_fmt", "yuv420p"]
-    if CFG["encoder"] == "hevc_qsv":
+    if vendor() == "qsv":
         return ["-c:v", "h264_qsv", "-global_quality", "16", "-pix_fmt", "nv12"]
-    if CFG["encoder"] == "hevc_amf":
+    if vendor() == "amf":
         return ["-c:v", "h264_amf", "-rc", "cqp", "-qp_i", "14", "-qp_p", "14", "-pix_fmt", "nv12"]
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-pix_fmt", "yuv420p"]
 
@@ -1410,7 +1434,7 @@ def make_preview(path):
             result={"title": Path(path).name, "before": "/previews/" + quote(before.name), "after": "/previews/" + quote(after.name),
                     "real": "/previews/" + quote(real.name), "seconds": round(clip[1]),
                     "src": f"{info['width']}x{info['height']} {info['codec']} {info['vbps'] / 1e6:.1f} Mbps",
-                    "dst": f"{out['width']}x{out['height']} hevc {real_mbps:.1f} Mbps" if out else "",
+                    "dst": f"{out['width']}x{out['height']} {out['codec']} {real_mbps:.1f} Mbps" if out else "",
                     "saving": round(100 * (1 - real_mbps / max(0.01, info["vbps"] / 1e6))) if out else None,
                     "match": round(sum(scores) / len(scores), 3) if scores else None, "preset": plan["preset"]},
             msg="preview ready")
@@ -1895,6 +1919,8 @@ class Handler(BaseHTTPRequestHandler):
                                   "arr": ARR, "verify": VERIFY, "junk": {"running": JUNK["running"], "msg": JUNK["msg"], "items": JUNK["items"],
                                                        "cats": {k: {"label": v[0], "default": v[1]} for k, v in JUNK_CATS.items()}},
                                   "encoders": [{"id": e, "name": n, "ok": e in WORKING_ENCODERS} for e, n in ENCODERS],
+                                  "codecs": [{"id": c, "name": n, "ok": (vendor(), c) in WORKING or (c != "av1" and not WORKING)} for c, n in CODECS.items()],
+                                  "av1Encoders": sorted({v for v, c in WORKING if c == "av1"}), "outCodec": out_codec(),
                                   "encoderNote": ENCODER_NOTE["text"], "appVersion": APP_VERSION, "update": UPDATE, "frozen": bool(getattr(sys, "frozen", False)), "defaultPresets": list(DEFAULT_PRESETS), "defaultPresetValues": DEFAULT_PRESETS,
                                   "presetDescs": PRESET_DESCRIPTIONS})
         if path == "/api/recommend":
@@ -1936,7 +1962,7 @@ class Handler(BaseHTTPRequestHandler):
                       "window", "pause_when_streaming", "auto_mode", "auto_interval_min", "protected",
                       "audio_lang_filter", "audio_keep_langs", "audio_keep_unknown", "audio_keep_default", "notify",
                       "sonarr_url", "sonarr_key", "radarr_url", "radarr_key", "arr_guard", "arr_rescan", "verify", "verify_min_ssim",
-                      "setup_done", "setup_presets", "setup_answers", "port", "online_lookup", "tmdb_key", "update_check"):
+                      "setup_done", "setup_presets", "setup_answers", "port", "online_lookup", "tmdb_key", "update_check", "codec", "devices"):
                 if k in b:
                     CFG[k] = b[k]
             save_json(CONFIG_PATH, CFG)
@@ -1948,6 +1974,11 @@ class Handler(BaseHTTPRequestHandler):
             return language_summary()
         if path == "/api/language_items":
             return language_items(lang_code(b.get("lang")))
+        if path == "/api/devices":
+            try:
+                return plex_devices()
+            except Exception as e:
+                return {"ids": [], "seen": [], "error": str(e)}
         if path == "/api/update/check":
             try:
                 check_update()
@@ -2105,28 +2136,75 @@ def check_tools():
 
 ENCODERS = [("hevc_nvenc", "NVIDIA graphics card (NVENC)"), ("hevc_qsv", "Intel graphics (Quick Sync)"),
             ("hevc_amf", "AMD graphics card (AMF)"), ("libx265", "Processor only (works everywhere, much slower)")]
-WORKING_ENCODERS = []
+VENDOR = {"hevc_nvenc": "nvenc", "hevc_qsv": "qsv", "hevc_amf": "amf", "libx265": "cpu"}
+CODECS = {"hevc": "HEVC (H.265)", "h264": "H.264", "av1": "AV1"}
+WORKING = set()                                   # (vendor, codec) pairs that passed a test encode here
+WORKING_ENCODERS = []                             # encoder ids (vendors) that can at least do HEVC or H.264
 ENCODER_NOTE = {"text": ""}
 
+def vendor():
+    return VENDOR.get(CFG["encoder"], "cpu")
+
+def out_codec():
+    """The format new encodes are written in. AV1 only with a graphics card that encodes it (software AV1 is too slow)."""
+    c = CFG.get("codec", "hevc")
+    if c == "av1" and (vendor(), "av1") not in WORKING:
+        return "hevc"
+    return c if c in CODECS else "hevc"
+
+def encoder_args(v, codec, cq, k, ten_bit):
+    """ffmpeg video-encoder arguments for one vendor and output format. k = max bitrate in kbit/s."""
+    rate = ["-maxrate", f"{k}k", "-bufsize", f"{2 * k}k"]
+    if v == "nvenc":
+        name = {"hevc": "hevc_nvenc", "h264": "h264_nvenc", "av1": "av1_nvenc"}[codec]
+        a = [name, "-preset", "p6", "-tune", "hq", "-rc", "vbr", "-cq", str(cq), "-b:v", "0", *rate, "-spatial-aq", "1", "-temporal-aq", "1"]
+        if codec == "hevc":
+            a += ["-profile:v", "main10" if ten_bit else "main"]
+        elif codec == "h264":
+            a += ["-profile:v", "high"]
+        return a
+    if v == "qsv":
+        name = {"hevc": "hevc_qsv", "h264": "h264_qsv", "av1": "av1_qsv"}[codec]
+        a = [name, "-preset", "slower", "-global_quality", str(cq), *rate]
+        if codec == "hevc":
+            a += ["-profile:v", "main10" if ten_bit else "main"]
+        return a
+    if v == "amf":
+        name = {"hevc": "hevc_amf", "h264": "h264_amf", "av1": "av1_amf"}[codec]
+        a = [name, "-quality", "quality", "-rc", "qvbr", "-qvbr_quality_level", str(max(1, min(51, 52 - cq))), *rate]
+        if codec == "hevc":
+            a += ["-profile:v", "main10" if ten_bit else "main"]
+        return a
+    if codec == "h264":
+        return ["libx264", "-preset", "medium", "-crf", str(cq - 4), "-maxrate", f"{k}k", "-bufsize", f"{2 * k}k", "-profile:v", "high"]
+    return ["libx265", "-preset", "medium", "-crf", str(cq - 2), "-x265-params", f"vbv-maxrate={k}:vbv-bufsize={2 * k}:log-level=error"]
+
 def test_encoders():
-    """Which encoders really work on this PC: a tiny test encode with each. Being in ffmpeg isn't enough;
-    NVENC needs an NVIDIA card (GTX 950 or newer), Quick Sync an Intel iGPU, AMF an AMD card, and current drivers."""
-    ok = []
+    """Which vendor/format pairs really work on this PC: a tiny test encode with the real settings. Being in ffmpeg
+    isn't enough; NVENC needs an NVIDIA card (GTX 950+, AV1 needs RTX 40+), Quick Sync an Intel iGPU (AV1: Arc),
+    AMF an AMD card (AV1: RX 7000+), and current drivers."""
+    ok = set()
     for enc, _ in ENCODERS:
-        try:
-            r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=320x240:d=0.2", "-frames:v", "3",
-                                "-c:v", enc, "-f", "null", "-"], capture_output=True, text=True, timeout=30)
-            if r.returncode == 0:
-                ok.append(enc)
-        except Exception:
-            pass
+        v = VENDOR[enc]
+        for codec in ("hevc", "h264", "av1"):
+            if v == "cpu" and codec == "av1":
+                continue
+            try:
+                r = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=320x240:d=0.2", "-frames:v", "3",
+                                    "-c:v", *encoder_args(v, codec, 28, 2000, False), "-f", "null", "-"], capture_output=True, text=True, timeout=30)
+                if r.returncode == 0:
+                    ok.add((v, codec))
+            except Exception:
+                pass
     return ok
 
 def init_engine():
     global FILTERS
     FILTERS = probe_filters()
-    WORKING_ENCODERS[:] = test_encoders()
-    print("encoders that work here:", ", ".join(WORKING_ENCODERS) or "none")
+    WORKING.clear()
+    WORKING.update(test_encoders())
+    WORKING_ENCODERS[:] = [e for e, _ in ENCODERS if (VENDOR[e], "hevc") in WORKING or (VENDOR[e], "h264") in WORKING]
+    print("encoders that work here:", ", ".join(f"{v}/{c}" for v, c in sorted(WORKING)) or "none")
     if WORKING_ENCODERS and CFG["encoder"] not in WORKING_ENCODERS:
         old, CFG["encoder"] = CFG["encoder"], WORKING_ENCODERS[0]
         save_json(CONFIG_PATH, CFG)
