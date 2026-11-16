@@ -1474,6 +1474,10 @@ def picture_check(src, out):
         scores.append(float(m.group(1)) if m else 0.0)
     return scores
 
+def audio_errors(path):
+    rc, err = run_quiet(["ffmpeg", "-hide_banner", "-nostats", "-v", "error", "-i", path, "-map", "0:a?", "-f", "null", "-"])
+    return [l for l in err.splitlines() if l.strip() and "non monotonically increasing dts" not in l]
+
 def verify_output(src, out, full=True):
     """(ok, detail). src/out are summarize() results. Checks a clean decode, audio lengths and picture similarity."""
     if not out:
@@ -1487,11 +1491,29 @@ def verify_output(src, out, full=True):
             rc, err = run_quiet(base + tail)
         if _PROC.get("cancel"):
             return False, "stopped by you"
-        errors = [l for l in err.splitlines() if l.strip()]
-        if rc != 0 or errors:
-            return False, f"decode errors ({len(errors)}): {errors[0][:120] if errors else rc}"
+        # "non monotonically increasing dts" comes from the throwaway null output, not from decoding: harmless
+        errors = [l for l in err.splitlines() if l.strip() and "non monotonically increasing dts" not in l]
+        if rc != 0 and not errors:
+            errors = [f"ffmpeg exit {rc}"]
+        if errors:
+            # Glitches in the audio that were already in the original (copied across untouched) aren't our doing.
+            # Count audio-only errors in both; the encode passes if the picture decoded cleanly and the audio is no worse.
+            out_a, src_a = audio_errors(out["path"]), audio_errors(src["path"])
+            if _PROC.get("cancel"):
+                return False, "stopped by you"
+            if len(errors) > len(out_a) or len(out_a) > len(src_a):
+                return False, f"decode errors ({len(errors)}): {errors[0][:120]}"
+            note = f"audio has the same {len(src_a)} glitch{'es' if len(src_a) != 1 else ''} as the original, "
+        else:
+            note = "decoded cleanly, "
+    else:
+        note = ""
+    src_longest = max(stream_durations(src["path"]) or [0])
     for i, d in enumerate(stream_durations(out["path"])):
         if d and d < out["duration"] - max(2.0, out["duration"] * 0.01):
+            if src_longest and d >= src_longest - max(2.0, src_longest * 0.01):
+                note += "audio as long as the original's, "   # the original's video runs on past its sound too
+                continue
             return False, f"audio track {i + 1} ends early ({d:.0f}s of {out['duration']:.0f}s)"
     scores = picture_check(src, out)
     if scores is None:
@@ -1500,7 +1522,7 @@ def verify_output(src, out, full=True):
     if low < CFG["verify_min_ssim"]:
         where = (0.1, 0.3, 0.5, 0.7, 0.9)[scores.index(low)]
         return False, f"picture doesn't match the original around {where * 100:.0f}% in (similarity {low:.2f})"
-    return True, f"{'decoded cleanly, ' if full else ''}picture match {sum(scores) / len(scores):.2f} (lowest {low:.2f})"
+    return True, f"{note}picture match {sum(scores) / len(scores):.2f} (lowest {low:.2f})"
 
 def held_pairs():
     """(original in holding, its encoded replacement) for everything still held."""
@@ -1843,13 +1865,13 @@ class Handler(BaseHTTPRequestHandler):
             if f.is_file():
                 return self.send_file(f, "audio/mp4" if f.suffix == ".m4a" else "video/mp4")
         if path == "/api/ping":
-            return self.send({"app": "reclaimer", "version": VERSION})
+            return self.send({"app": "reclaimer", "version": VERSION, "release": APP_VERSION})
         if path == "/api/state":
             with LOCK:
                 return self.send({"config": CFG, "scan": SCAN, "queue": QUEUE, "media": MEDIA, "preview": PREVIEW, "cached": len(CACHE),
                                   "arr": ARR, "verify": VERIFY, "junk": {"running": JUNK["running"], "msg": JUNK["msg"], "items": JUNK["items"],
                                                        "cats": {k: {"label": v[0], "default": v[1]} for k, v in JUNK_CATS.items()}},
-                                  "encoders": ["hevc_nvenc", "libx265"], "defaultPresets": list(DEFAULT_PRESETS), "defaultPresetValues": DEFAULT_PRESETS,
+                                  "encoders": ["hevc_nvenc", "libx265"], "appVersion": APP_VERSION, "defaultPresets": list(DEFAULT_PRESETS), "defaultPresetValues": DEFAULT_PRESETS,
                                   "presetDescs": PRESET_DESCRIPTIONS})
         if path == "/api/recommend":
             with LOCK:
@@ -2050,6 +2072,7 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = os.name != "nt"   # on Windows, reuse would let two programs share one port silently
     daemon_threads = True
 
+APP_VERSION = "0.9.0"                            # the release number people see; bump it for each release
 VERSION = str(int(os.path.getmtime(sys.executable if getattr(sys, "frozen", False) else __file__)))
 
 def popup(text):
@@ -2722,6 +2745,7 @@ def run_tray(url, srv):
             start_queue()
     menu = pystray.Menu(
         pystray.MenuItem("Open Reclaimer", lambda icon, _: webbrowser.open(url), default=True),
+        pystray.MenuItem(f"Reclaimer {APP_VERSION}", None, enabled=False),
         pystray.MenuItem(lambda _: status_text(), None, enabled=False),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem(lambda _: "Stop after current file" if QUEUE["running"] else "Start queue", queue_toggle,

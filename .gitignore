@@ -15,6 +15,7 @@ previews/
 # PyInstaller output
 build/
 dist/
+release/
 *.spec
 reclaimer.ico
 

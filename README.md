@@ -2,7 +2,16 @@
 
 Finds what got lost in a Plex, Jellyfin, Emby or Kodi media library (the 4K episode in a 720p season, the movie ten times the size it deserves, the audio tracks nobody listens to) and cleans it up. Scans with ffprobe, recommends where space can be saved, and re-encodes on the GPU to HEVC that every device in the house direct-plays (Xbox One X, Roku Ultra, iPhone/iPad, Android, PC).
 
-## Setup (Windows main PC)
+## Download
+
+Grab `Reclaimer-v0.9.0-windows.zip` from the **Releases** page, unzip it into a folder of its own (settings and logs are kept next to it), and run `reclaimer.exe`. You'll also need ffmpeg: `winget install Gyan.FFmpeg`, or Reclaimer shows you how on first launch.
+
+- **"Windows protected your PC"**: the exe isn't code-signed. Click **More info → Run anyway**.
+- **Antivirus complains**: one-file Python apps sometimes get flagged by mistake. Run from source instead (below).
+
+To build a release yourself: bump `APP_VERSION` in `reclaimer.py` and run `make_release.bat`.
+
+## Setup (Windows main PC) (from source)
 
 ```
 winget install Python.Python.3.12
